@@ -5,6 +5,7 @@ https://mozilla.org/MPL/2.0/.
 -/
 
 import Napplet.Basic
+import Napplet.Json
 import Napplet.Manifest
 import Napplet.Capability
 import Napplet.Wire
