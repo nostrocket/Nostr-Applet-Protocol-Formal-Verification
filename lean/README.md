@@ -1,8 +1,9 @@
 # Napplet protocol: Lean 4 model
 
 A machine-checked model of the NIP-5D core, the five NAPs merged to
-`napplet/naps` `master` (SHELL, INTENT, INC, THEME, IDENTITY), and six NAPs from
-open PR branches (STORAGE, RESOURCE, RELAY, OUTBOX, UPLOAD, VALUE). Section numbers refer
+`napplet/naps` `master` (SHELL, INTENT, INC, THEME, IDENTITY), and all fourteen live
+NAPs on open PR branches (STORAGE, RESOURCE, RELAY, OUTBOX, UPLOAD, VALUE, LINK, NOTIFY,
+DISPLAY, KEYS, POW, CONFIG, MEDIA, CVM): 246 theorems in all. Section numbers refer
 to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md).
 
 - Lean `v4.36.0`, no Mathlib, no dependencies.
@@ -34,6 +35,14 @@ cd lean && lake build
 | `Nap.Outbox` | §15.9 | `publish_single_event`, `publish_signed_by_shell`, `publish_requires_write`. Fanout: `plan_nodup`, `plan_allowed` (napplet-named relays cannot bypass relay policy), `plan_includes_outbox`, `plan_includes_inboxes`, `missing_inbox_reported`, `fallback_not_for_inboxes`. Queries: `query_nodup`, `query_sound`, `query_verified`, `getEvent_matches`. |
 | `Nap.Upload` | §15.10 | `send_requires_policy`: bytes leave only after the rail, size, MIME and consent checks pass, to the shell-configured server. `send_auth_by_shell`. `complete_requires_confirmation` and `complete_hashes` (`sha256` covers the stored bytes; `originalSha256` appears exactly when transformed). `consent_latch`, `unsupported_rail_no_send`, `rejected_no_send`, `upload_same_id`. |
 | `Nap.Value` | §15.16 | `pay_requires_consent_or_allowance`, `pay_within_policy`, `settled_requires_proof`, `failure_not_success`, `zap_signed_by_shell`. Allowances: `allowance_other_napplets_untouched`, `allowance_no_overspend` (the pool shrinks by exactly the amount paid, or not at all). `quote_not_binding`, `send_same_id`. |
+| `Nap.Link` | §15.15 | `opened_scheme_safe`, `forbidden_never_opened` (`javascript:`, `data:`, `blob:`, `file:` and the like, even if policy lists them), `relative_rejected`, `label_irrelevant`, `opened_requires_user_or_rule`, `opened_noopener`, `open_same_id`. |
+| `Nap.Notify` | §15.13 | `render_attributed`, `render_sanitized`, `render_actions_capped` (≤ 3), `send_requires_permission`, `send_error_creates_nothing`, `dismiss_only_own`, `dismiss_foreign_ignored`, `cleanup_removes_all`, `send_same_id`. |
+| `Nap.Display` | §15.19 | `list_permitted`. `push_atomic`: an invalid batch changes nothing. `push_applies`: a valid batch sets exactly its pixels and touches no other pixel or display. |
+| `Nap.Keys` | §15.11 | Canonical combos: `parse_render`, `normalize_idem`, `normalize_order_free`. The invariant (no reserved binding, no combo bound twice) is preserved by `Inv.register` and `Inv.unregister`. `reserved_never_suppressed`, `suppress_list_safe`, `text_input_never_forwarded`, `register_duplicate_rejected`, `register_other_napplets_untouched`, `bindings_push_complete`. |
+| `Nap.Pow` | §15.18 | `submit_accepted` (fresh per-napplet id, target cap, queue room), `jobs_namespaced`. `mine_done`: the target is met, the user's pubkey is stamped, there is exactly one nonce tag, and template tags are kept. `publish_verbatim`, `pushes_to_owner`. |
+| `Nap.Config` | §15.14 | `register_accepts_only_core` (no unsupported feature, depth ≤ 4, no secret with a default), `values_valid`, `values_declared`, `secret_never_defaulted`, `default_resolution`, `no_schema_error`, `handle_values_valid`. The shell is the sole writer by construction. |
+| `Nap.Media` | §15.12 | The invariant is preserved by create, retire, command, focus and pause. `create_fresh`: ids are never reused, retired ones included. `retire_once`, `retired_silent`, `ops_preserve_owner`, `fetch_only_shell_owned`, `resume_only_after_focus_pause`, `user_pause_blocks_resume`. |
+| `Nap.Cvm` | §15.17 | `timeout_ok` (never clamped), `timeout_120s_accepted`, `paid_requires_authority`, `deny_never_pays`, `free_always_allowed`, `reserve_never_overspends`. `response_routed_to_owner`, `transport_ids_fresh`, `late_response_dropped`, `duplicate_response_dropped`, `registry_call_hash_checked`, `exactly_one_result`, `unimplemented_has_false`, `unimplemented_unsupported`. |
 | `Nap.Identity` | §15.5 | `handle_same_id`, `getPublicKey_no_error`, `change_notifies`, `signout_notifies`, `change_only_exposed`. Read-only by construction: `handle` returns no new state, and the request type has no signing or encryption operations. |
 
 ## Assumptions (not proved)
@@ -104,9 +113,32 @@ Each of these is a candidate clarification for the spec:
 19. **VALUE: allowance and consent.** A covering allowance replaces the prompt.
     Without one, the user is asked. A request no allowance covers is never
     partially charged against one.
+20. **KEYS: modifier order.** The spec calls `Alt+Ctrl+Shift+Meta` "alphabetical",
+    but it is not alphabetical (the open review issue). The model uses the stated
+    order, and parses modifiers in any order to one canonical form. The key segment
+    is compared exactly, so reserved Ctrl+W/T/L are listed in both cases.
+21. **KEYS: conflicting `defaultKey`.** The spec says the shell MAY bind. The model
+    leaves an action unbound if its hint is reserved or already bound, so no combo
+    is ever bound twice.
+22. **MEDIA: initial state.** After a successful create, the model starts a session
+    `stopped`. The spec does not define the first state (open review issue).
+23. **MEDIA: focus pause and user pause.** The model records that focus loss
+    paused a session. A later user or napplet pause clears that, so focus regain
+    never resumes it.
+24. **NOTIFY: who may dismiss.** The spec says only to ignore unknown ids. The
+    model also ignores ids owned by another napplet.
+25. **LINK: `blocked-by-policy` vs `user-denied`.** A persisted deny rule gives
+    `blocked-by-policy`. A declined prompt gives `user-denied`. The open review
+    question is whether to pass the shell's own reason through instead.
+26. **CONFIG: invalid defaults.** The model delivers a declared default only if it
+    validates, consistent with "validate every value before delivery".
+27. **CVM: payment price.** Price is an input. CEP-8 negotiation is not modelled,
+    nor are the `-32042` interception mechanics.
+28. **POW: timeout.** A search that returns a nonce failing the target is treated
+    as a timeout. The shell never returns a result below target.
 
 ## Not modelled yet
 
-KEYS, MEDIA, NOTIFY, CONFIG, LINK, CVM, POW and DISPLAY (all on open PR branches); RESOURCE's `hashtree`/`htree`/`nostr` scheme details and
+RESOURCE's `hashtree`/`htree`/`nostr` scheme details and
 canonical base64; message payload schemas beyond what the proofs need; NIP-19
 `naddr` decoding; and the deferred CLASS and CONNECT tracks.

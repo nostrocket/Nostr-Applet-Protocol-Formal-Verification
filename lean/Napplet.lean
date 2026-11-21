@@ -14,3 +14,11 @@ import Napplet.Nap.Relay
 import Napplet.Nap.Outbox
 import Napplet.Nap.Upload
 import Napplet.Nap.Value
+import Napplet.Nap.Link
+import Napplet.Nap.Notify
+import Napplet.Nap.Display
+import Napplet.Nap.Keys
+import Napplet.Nap.Pow
+import Napplet.Nap.Config
+import Napplet.Nap.Media
+import Napplet.Nap.Cvm
