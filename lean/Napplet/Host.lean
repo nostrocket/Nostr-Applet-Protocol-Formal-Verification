@@ -49,10 +49,23 @@ and the browser.
   stores them. Everything keyed by port or window is per session.
 * **Tags.** A tag (`CallTag`) is unique among the calls the runtime has outstanding.
   The host echoes it unchanged and never invents one.
-* **Standards.** Where a contract names a standard (NIP-01, NIP-04, NIP-44,
-  NIP-65, BIP-340, FIPS 180-4, WHATWG MIME Sniffing, BUD-10, HTS-01, NIP-19,
-  NIP-96, NIP-98, NIP-57, NWC, ContextVM, NIP-13) the host implements that
-  standard; the model does not restate it.
+* **Standards.** Where a contract names a standard the host implements that
+  standard; the model does not restate it. The complete list the host interface
+  relies on:
+  - Nostr: NIP-01 (events, ids, filters, relay protocol), NIP-04, NIP-44 (payload
+    encryption), NIP-07 / NIP-46 (signer access, host side only), NIP-13 (proof of
+    work), NIP-17 / NIP-59 (which incoming events are encrypted), NIP-19 / NIP-21
+    (bech32 entities, `nostr:` URIs), NIP-47 (NWC), NIP-51 (lists), NIP-57 (zaps),
+    NIP-58 (badges), NIP-65 (relay lists), NIP-92 / NIP-94 (media metadata), NIP-96
+    (HTTP file storage), NIP-98 (HTTP auth).
+  - Blossom BUD-02 (upload), BUD-10 (`blossom:` URIs), BUD-11 (auth); Hashtree HTS-01
+    and its URL-ENCODING note; LNURL LUD-06 / LUD-16; ContextVM CEP-4, CEP-6, CEP-8,
+    CEP-15, CEP-17, CEP-35 and MCP 2025-11-25.
+  - BIP-340 (Schnorr signatures), BIP-173 (bech32), FIPS 180-4 (SHA-256), RFC 8259
+    (JSON), RFC 4648 (base64), RFC 2397 (`data:` URLs), WHATWG MIME Sniffing.
+  - Browser behaviour of the web projection (HTML iframe `sandbox`/`srcdoc`,
+    `postMessage`, `MessageChannel`, structured clone, `MessageEvent.source`, Content
+    Security Policy Level 3) is fixed by NIP-5D and the HTML standard.
 -/
 
 namespace Napplet
