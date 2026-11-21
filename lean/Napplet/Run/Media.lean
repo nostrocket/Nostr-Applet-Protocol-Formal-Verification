@@ -425,8 +425,12 @@ def createOk (id w : String) (o : Owner) : Json :=
   Json.msg "media.session.create.result"
     [("id", some (.str id)), sidField w, ("owner", some (.str (ownerName o)))]
 
-def createErr (id e : String) : Json :=
-  Json.msg "media.session.create.result" [("id", some (.str id)), ("error", some (.str e))]
+/-- A rejected create. `sessionId` is "Required on successful creation" and optional
+otherwise; the result echoes the napplet's preferred id when it gave one, as in
+upstream's "Session creation rejected" example. No session exists. -/
+def createErr (id : String) (hint : Option String) (e : String) : Json :=
+  Json.msg "media.session.create.result"
+    [("id", some (.str id)), ("sessionId", hint.map .str), ("error", some (.str e))]
 
 def endedJson (w : String) (r : Reason) : Json :=
   Json.msg "media.session.ended" [sidField w, ("reason", some (.str (reasonName r)))]
@@ -521,7 +525,7 @@ def registerArgs (cx : Ctx) (w : String) (c : Create) (caps : List Action) : Lis
 def realizeCreate (cx : Ctx) (s : St) (c : Create) (w : String) : MediaOut → List Eff
   | .createResult to id (some _) _ =>
     [.send to (createOk id w c.owner), .send to (controlsJson w s.cfg.controls)]
-  | .createResult to id none e => [.send to (createErr id (e.getD "invalid request"))]
+  | .createResult to id none e => [.send to (createErr id c.hint (e.getD "invalid request"))]
   | .fetchSource _ => [hostEff "open" (openArgs cx w c)]
   | _ => []
 
@@ -531,10 +535,10 @@ def created? : List MediaOut → Option Nat
 
 def handleCreate (cx : Ctx) (s : St) (c : Create) : St × List Eff :=
   match precheck cx s c with
-  | some e => (s, [.send cx.port (createErr c.id e)])
+  | some e => (s, [.send cx.port (createErr c.id c.hint e)])
   | none =>
     let w := canonical s c.hint
-    if w ∈ used s then (s, [.send cx.port (createErr c.id "invalid session ID")])
+    if w ∈ used s then (s, [.send cx.port (createErr c.id c.hint "invalid session ID")])
     else
       let consent := !(c.owner = .shell && c.autoplay = some true && !s.cfg.autoplay)
       let res := NapMedia.create s.core cx.port c.id c.owner c.source.isSome consent
@@ -1156,9 +1160,9 @@ def afterEx2 := run (Json.parse! ex2) st7
 #guard match sent (run (Json.parse! "{ \"type\": \"media.session.create\", \"id\": \"m4\", \"owner\": \"shell\" }")).2 with
   | [r] => Json.same r (Json.parse! "{ \"type\": \"media.session.create.result\", \"id\": \"m4\", \"error\": \"missing source\" }")
   | _ => false
--- session limit (upstream's example also carries `sessionId`; no session exists, so it is omitted)
+-- session limit: upstream's example, verbatim (the preferred id is echoed; no session exists)
 #guard match sent (run (Json.parse! ex1) { St.init with cfg := { maxSessions := 0 } }).2 with
-  | [r] => Json.same r (Json.parse! "{ \"type\": \"media.session.create.result\", \"id\": \"m1\", \"error\": \"session limit exceeded\" }")
+  | [r] => Json.same r (Json.parse! "{ \"type\": \"media.session.create.result\", \"id\": \"m1\", \"sessionId\": \"s1\", \"error\": \"session limit exceeded\" }")
   | _ => false
 -- a reused preferred id is rewritten
 #guard match sent (run (Json.parse! ex1) afterEx1.1).2 with

@@ -16,17 +16,18 @@ but the model was built from the upstream texts at the commits listed below.
   tables is decoded or produced by its component; all 91 JSON request examples in the
   NAP specs decode (`Napplet/Test/UpstreamExamples.lean`); `Napplet/Test/E2E.lean`
   feeds upstream example JSON for every NAP through `Runtime.step`. Of the 118 JSON
-  response examples in the NAP specs, 114 are reproduced verbatim by guards
-  (`scripts/response_coverage.py`). The other 4 cannot be produced verbatim, and each
-  is reproduced in substance:
-  - INC (2): `c-abc` and `endpoint-music-controller` are illustrative ids; the
-    runtime assigns `c-<n>` and `endpoint-<window>`. The same messages with runtime
-    ids are checked end to end.
-  - MEDIA (1): the rejected-create example carries `sessionId`, which contradicts
-    upstream's prose ("the session was not created"); the model omits it.
-  - CVM (1): the registry is off by default (kehto does not implement it); with it on,
-    `Run/Cvm.lean` checks the example with 64-hex hashes in place of the abbreviated
-    ones.
+  response examples in the NAP specs, 115 are reproduced verbatim by guards
+  (`scripts/response_coverage.py`). The other 3 cannot be produced verbatim by a shell
+  that follows the upstream text, and each is reproduced in substance:
+  - INC (2): the example opens with "Assume the opener endpoint identifier is
+    `endpoint-music-controller`", and NAP-INC says "Identifier encoding is runtime
+    policy" and channel ids are "shell-assigned opaque". The model's runtime assigns
+    `endpoint-<window>` and `c-<n>`; the same messages with those ids, field for
+    field, are checked end to end.
+  - CVM (1): the example's registry entry carries abbreviated hashes (`a7f3d9...`),
+    but NAP-CVM requires 64-character lowercase hex SHA-256 hashes that "are computed
+    and verified by the shell", so a conforming shell must reject them. `Run/Cvm.lean`
+    checks the same exchange with full-length hashes.
 
 ```bash
 cd lean && lake build
@@ -409,7 +410,8 @@ session with reason `error`; a napplet's session id hint is honoured if fresh an
 `shell-` prefixed; ids are never reused in a runtime session; out-of-range numbers
 are dropped; caller reasons on commands are replaced by `user`; a napplet-owned
 session that cannot pause on focus loss is retired with `policy`; a failed create
-result omits `sessionId` (upstream's prose; its example includes it).
+result echoes the napplet's preferred `sessionId` when it gave one (upstream's
+example; the field is required only on success).
 
 CONFIG: a rejected schema gets the correlated `config.registerSchema.result` and the
 `config.schemaError` push upstream requires ("pushes `config.schemaError` messages when
