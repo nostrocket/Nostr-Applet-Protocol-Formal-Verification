@@ -13,6 +13,8 @@ COMPS = [
     ("Notify", "notify", "notify", "notifyCfg", "Run.Notify.St.init cfg.notifyCfg"),
     ("Display", "display", "display", "displayCfg", "Run.Display.St.init cfg.displayCfg"),
     ("Keys", "keys", "keys", None, "Run.Keys.St.init"),
+    ("Relay", "relay", "relay", "relayCfg", "Run.Relay.St.init cfg.relayCfg"),
+    ("Outbox", "outbox", "outbox", "outboxCfg", "Run.Outbox.St.init cfg.outboxCfg"),
 ]
 extra = sys.argv[1:]  # e.g. Relay:relay:relay:relayCfg
 for e in extra:

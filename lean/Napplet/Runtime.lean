@@ -13,6 +13,8 @@ import Napplet.Run.Intent
 import Napplet.Run.Notify
 import Napplet.Run.Display
 import Napplet.Run.Keys
+import Napplet.Run.Relay
+import Napplet.Run.Outbox
 
 /-!
 # The composed runtime
@@ -51,6 +53,8 @@ structure Config where
   intentCfg : Run.Intent.Cfg := {}
   notifyCfg : Run.Notify.Cfg := {}
   displayCfg : Run.Display.Cfg := {}
+  relayCfg : Run.Relay.Cfg := {}
+  outboxCfg : Run.Outbox.Cfg := {}
 
 structure RtState where
   shell : ShellState
@@ -70,6 +74,8 @@ structure RtState where
   notify : Run.Notify.St
   display : Run.Display.St
   keys : Run.Keys.St
+  relay : Run.Relay.St
+  outbox : Run.Outbox.St
 
 def RtState.init (cfg : Config) : RtState where
   shell := .init
@@ -86,6 +92,8 @@ def RtState.init (cfg : Config) : RtState where
   notify := Run.Notify.St.init cfg.notifyCfg
   display := Run.Display.St.init cfg.displayCfg
   keys := Run.Keys.St.init
+  relay := Run.Relay.St.init cfg.relayCfg
+  outbox := Run.Outbox.St.init cfg.outboxCfg
 
 inductive Input where
   /-- Run manifest `m` with fetched artifact `bytes` in new window `w` (NIP-5D
@@ -158,7 +166,9 @@ def mentionsList (s : RtState) (p : PortId) : List Bool :=
    Run.Intent.mentions s.intent p,
    Run.Notify.mentions s.notify p,
    Run.Display.mentions s.display p,
-   Run.Keys.mentions s.keys p]
+   Run.Keys.mentions s.keys p,
+   Run.Relay.mentions s.relay p,
+   Run.Outbox.mentions s.outbox p]
 
 /-- Any component holds state for port `p`. -/
 def mentions (s : RtState) (p : PortId) : Bool := (mentionsList s p).any id
@@ -192,6 +202,10 @@ def napStep (h : Host) (w : World) (cx : Ctx) (s : RtState) (j : Json) : Domain 
       (fun st => { s with display := st }) s
   | .keys => lift (Run.Keys.decode j) cx.port (Run.Keys.handle h w cx s.keys)
       (fun st => { s with keys := st }) s
+  | .relay => lift (Run.Relay.decode j) cx.port (Run.Relay.handle h w cx s.relay)
+      (fun st => { s with relay := st }) s
+  | .outbox => lift (Run.Outbox.decode j) cx.port (Run.Outbox.handle h w cx s.outbox)
+      (fun st => { s with outbox := st }) s
   | _ => (s, [])
 
 /-- Tear endpoint `p` down in every component. -/
@@ -205,8 +219,10 @@ def dropAll (s : RtState) (p : PortId) : RtState × List Output :=
   let (c6, e6) := Run.Notify.drop s.notify p
   let (c7, e7) := Run.Display.drop s.display p
   let (c8, e8) := Run.Keys.drop s.keys p
-  ({ s with shellNap := c0, theme := c1, identity := c2, storage := c3, inc := c4, intent := c5, notify := c6, display := c7, keys := c8 },
-   (e0 ++ e1 ++ e2 ++ e3 ++ e4 ++ e5 ++ e6 ++ e7 ++ e8).map ofEff)
+  let (c9, e9) := Run.Relay.drop s.relay p
+  let (c10, e10) := Run.Outbox.drop s.outbox p
+  ({ s with shellNap := c0, theme := c1, identity := c2, storage := c3, inc := c4, intent := c5, notify := c6, display := c7, keys := c8, relay := c9, outbox := c10 },
+   (e0 ++ e1 ++ e2 ++ e3 ++ e4 ++ e5 ++ e6 ++ e7 ++ e8 ++ e9 ++ e10).map ofEff)
 
 def closedPorts : List Napplet.Output → List PortId
   | [] => []
@@ -268,6 +284,12 @@ def replyStep (h : Host) (s : RtState) (tag : CallTag) (r : Reply) : RtState × 
   | .keys =>
     let (st, effs) := Run.Keys.onReply h w s.keys tag.n r
     ({ s with keys := st }, effs.map ofEff)
+  | .relay =>
+    let (st, effs) := Run.Relay.onReply h w s.relay tag.n r
+    ({ s with relay := st }, effs.map ofEff)
+  | .outbox =>
+    let (st, effs) := Run.Outbox.onReply h w s.outbox tag.n r
+    ({ s with outbox := st }, effs.map ofEff)
   | _ => (s, [])
 
 def newUser (s : RtState) : HostEvent → String
@@ -285,8 +307,10 @@ def eventStep (h : Host) (s : RtState) (e : HostEvent) : RtState × List Output 
   let (c6, e6) := Run.Notify.onEvent h w s.notify e
   let (c7, e7) := Run.Display.onEvent h w s.display e
   let (c8, e8) := Run.Keys.onEvent h w s.keys e
-  ({ s with shellNap := c0, theme := c1, identity := c2, storage := c3, inc := c4, intent := c5, notify := c6, display := c7, keys := c8, user := newUser s e },
-   (e0 ++ e1 ++ e2 ++ e3 ++ e4 ++ e5 ++ e6 ++ e7 ++ e8).map ofEff)
+  let (c9, e9) := Run.Relay.onEvent h w s.relay e
+  let (c10, e10) := Run.Outbox.onEvent h w s.outbox e
+  ({ s with shellNap := c0, theme := c1, identity := c2, storage := c3, inc := c4, intent := c5, notify := c6, display := c7, keys := c8, relay := c9, outbox := c10, user := newUser s e },
+   (e0 ++ e1 ++ e2 ++ e3 ++ e4 ++ e5 ++ e6 ++ e7 ++ e8 ++ e9 ++ e10).map ofEff)
 
 /-- The composed transition function: the whole shell. -/
 def step (h : Host) (cfg : Config) (s : RtState) : Input → RtState × List Output
@@ -424,50 +448,56 @@ theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => Run.Shell.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => Run.Shell.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case intent =>
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case inc =>
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Inc.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Inc.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case theme =>
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => Run.Theme.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => Run.Theme.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case identity =>
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Identity.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Identity.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
-        case relay => exact hi
+        case relay =>
+          simp only [napStep, lift]
+          split
+          · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Relay.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, trivial⟩
+          · exact hi
+          · exact hi
         case storage =>
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Storage.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Storage.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case keys =>
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Keys.handle_mentions _ _ _ _ _ _ hlive h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Keys.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case media => exact hi
@@ -475,14 +505,20 @@ theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Notify.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Notify.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
         case resource => exact hi
         case config => exact hi
         case upload => exact hi
         case value => exact hi
-        case outbox => exact hi
+        case outbox =>
+          simp only [napStep, lift]
+          split
+          · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Outbox.handle_mentions _ _ _ _ _ _ hlive h1, trivial⟩
+          · exact hi
+          · exact hi
         case cvm => exact hi
         case link => exact hi
         case pow => exact hi
@@ -490,7 +526,7 @@ theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
           simp only [napStep, lift]
           split
           · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Display.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, trivial⟩
+            exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Display.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
           · exact hi
           · exact hi
       · exact hi
@@ -527,7 +563,9 @@ theorem dropAll_mentions (s : RtState) (p q : PortId) (h : mentions (dropAll s p
     fun h1 => ⟨Run.Intent.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Intent.drop_clears] at h1; simp at h1⟩,
     fun h1 => ⟨Run.Notify.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Notify.drop_clears] at h1; simp at h1⟩,
     fun h1 => ⟨Run.Display.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Display.drop_clears] at h1; simp at h1⟩,
-    fun h1 => ⟨Run.Keys.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Keys.drop_clears] at h1; simp at h1⟩, trivial⟩
+    fun h1 => ⟨Run.Keys.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Keys.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Relay.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Relay.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Outbox.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Outbox.drop_clears] at h1; simp at h1⟩, trivial⟩
 
 theorem dropPorts_shell (s : RtState) (ps : List PortId) :
     (dropPorts s ps).1.shell = s.shell ∧ (dropPorts s ps).1.ports = s.ports := by
@@ -571,7 +609,7 @@ theorem Inv.flush {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) :
   simp only [flushStep]
   apply Inv.of_mentions hi; rfl; rfl
   intro q; simp only [mentionsList, Pw]
-  exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.flush_mentions _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+  exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.flush_mentions _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
 
 theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : Event) :
     Inv h cfg (browserStep h cfg s e).1 := by
@@ -610,55 +648,59 @@ theorem Inv.reply {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (ta
   cases d
   case shell =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => Run.Shell.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => Run.Shell.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case intent =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case inc =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Inc.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Inc.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case theme =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => Run.Theme.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => Run.Theme.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case identity =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Identity.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
-  case relay => exact hi
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Identity.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+  case relay =>
+    apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Relay.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, trivial⟩
   case storage =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Storage.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Storage.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case keys =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Keys.onReply_mentions _ _ _ _ _ _ h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Keys.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case media => exact hi
   case notify =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Notify.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Notify.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
   case resource => exact hi
   case config => exact hi
   case upload => exact hi
   case value => exact hi
-  case outbox => exact hi
+  case outbox =>
+    apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Outbox.onReply_mentions _ _ _ _ _ _ h1, trivial⟩
   case cvm => exact hi
   case link => exact hi
   case pow => exact hi
   case display =>
     apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]
-    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Display.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, trivial⟩
+    exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Display.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩
 
 theorem Inv.event {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : HostEvent) :
     Inv h cfg (eventStep h s e).1 := by
   apply Inv.of_mentions hi; rfl; rfl
   intro q
   simp only [mentionsList, eventStep, Pw]
-  exact ⟨fun h1 => Run.Shell.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Theme.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Identity.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Storage.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Inc.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Intent.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Notify.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Display.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Keys.onEvent_mentions _ _ _ _ _ h1, trivial⟩
+  exact ⟨fun h1 => Run.Shell.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Theme.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Identity.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Storage.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Inc.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Intent.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Notify.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Display.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Keys.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Relay.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Outbox.onEvent_mentions _ _ _ _ _ h1, trivial⟩
 
 theorem Inv.init (h : Host) (cfg : Config) : Inv h cfg (.init cfg) where
   shell := Napplet.Inv.init _ _
   ports := by simp [RtState.init, ShellState.init]
   clean := by
     intro p _
-    simp [mentions, mentionsList, RtState.init, Run.Shell.St.init, Run.Shell.mentions, Run.Theme.St.init, Run.Theme.mentions, Run.Identity.St.init, Run.Identity.mentions, Run.Storage.St.init, Run.Storage.mentions, Run.Inc.St.init, Run.Inc.mentions, Run.Intent.St.init, Run.Intent.mentions, Run.Notify.St.init, Run.Notify.mentions, Run.Notify.ports, Run.Display.St.init, Run.Display.mentions, Run.Keys.St.init, Run.Keys.mentions]
+    simp [mentions, mentionsList, RtState.init, Run.Shell.St.init, Run.Shell.mentions, Run.Theme.St.init, Run.Theme.mentions, Run.Identity.St.init, Run.Identity.mentions, Run.Storage.St.init, Run.Storage.mentions, Run.Inc.St.init, Run.Inc.mentions, Run.Intent.St.init, Run.Intent.mentions, Run.Notify.St.init, Run.Notify.mentions, Run.Notify.ports, Run.Display.St.init, Run.Display.mentions, Run.Keys.St.init, Run.Keys.mentions, Run.Relay.St.init, Run.Relay.mentions, Run.Outbox.St.init, Run.Outbox.mentions]
 
 theorem Inv.step {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (i : Input) :
     Inv h cfg (step h cfg s i).1 := by

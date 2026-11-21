@@ -174,4 +174,49 @@ def sKey := post s1 7 "{ \"type\": \"keys.registerAction\", \"id\": \"r1\", \"ac
 -- teardown drops the bindings: the next napplet on the port starts clean
 #guard (Runtime.mentions (Runtime.step testHost testCfg sKey.1 (.portClosed 7)).1 7) == false
 
+/-! ### NAP-RELAY -/
+
+def sU : RtState := (Runtime.step testHost testCfg s1 (.event (.userChanged "def..."))).1
+
+def ev1 : NostrEvent := (NostrEvent.ofJson? (Json.parse! "{ \"id\": \"abc...\", \"pubkey\": \"def...\", \"kind\": 1, \"content\": \"hello\", \"tags\": [], \"created_at\": 1234567890, \"sig\": \"...\" }")).get!
+
+def sRSub := post sU 7 "{ \"type\": \"relay.subscribe\", \"id\": \"a1\", \"subId\": \"sub-1\", \"filters\": [{ \"kinds\": [1], \"limit\": 50 }] }"
+#guard (calls sRSub.2).map (·.1) == [⟨.relay, 0⟩]
+def sREv := runAll testHost testCfg sRSub.1
+  [.reply ⟨.relay, 0⟩ (.event ev1 "wss://relay.example.com"), .reply ⟨.relay, 0⟩ .eose]
+#guard sendsAre 7 sREv.2
+  ["{ \"type\": \"relay.event\", \"subId\": \"sub-1\", \"result\": { \"event\": { \"id\": \"abc...\", \"pubkey\": \"def...\", \"kind\": 1, \"content\": \"hello\", \"tags\": [], \"created_at\": 1234567890, \"sig\": \"...\" }, \"sidecar\": { \"relayHints\": [\"wss://relay.example.com\"] } } }",
+   "{ \"type\": \"relay.eose\", \"subId\": \"sub-1\" }"]
+
+def evPub : NostrEvent := { id := "abc...", pubkey := "def...", createdAt := 1234567890, kind := 1, tags := [], content := "hello world", sig := "ghi..." }
+def sRPub := post sU 7 "{ \"type\": \"relay.publish\", \"id\": \"b2\", \"event\": { \"kind\": 1, \"content\": \"hello world\", \"tags\": [], \"created_at\": 1234567890 } }"
+#guard match calls sRPub.2 with
+  | [(_, .sign u)] => u == { pubkey := "def...", createdAt := 1234567890, kind := 1, tags := [], content := "hello world" }
+  | _ => false
+def sRPubDone := runAll testHost testCfg sRPub.1
+  [.reply ⟨.relay, 0⟩ (.signed (some evPub)), .reply ⟨.relay, 1⟩ (.published [("wss://relay.example.com", true)])]
+#guard sendsAre 7 sRPubDone.2
+  ["{ \"type\": \"relay.publish.result\", \"id\": \"b2\", \"ok\": true, \"event\": { \"id\": \"abc...\", \"pubkey\": \"def...\", \"kind\": 1, \"content\": \"hello world\", \"tags\": [], \"created_at\": 1234567890, \"sig\": \"ghi...\" }, \"eventId\": \"abc...\" }"]
+-- napplet-supplied ciphertext is never signed
+#guard (calls (post sU 7 "{ \"type\": \"relay.publish\", \"id\": \"b3\", \"event\": { \"kind\": 4, \"content\": \"Zm9v?iv=YmFy\" } }").2).isEmpty
+-- publishEncrypted: the shell encrypts first (NIP-44 default)
+#guard match calls (post sU 7 "{ \"type\": \"relay.publishEncrypted\", \"id\": \"f6\", \"event\": { \"kind\": 4, \"content\": \"secret message\", \"tags\": [[\"p\", \"recipient...\"]], \"created_at\": 1234567890 }, \"recipient\": \"recipient...\", \"encryption\": \"nip44\" }").2 with
+  | [(_, .encrypt .nip44 "recipient..." "secret message")] => true
+  | _ => false
+def sRQ := post sU 7 "{ \"type\": \"relay.query\", \"id\": \"c3\", \"filters\": [{ \"authors\": [\"def...\"], \"kinds\": [0], \"limit\": 1 }] }"
+def ev0 : NostrEvent := { id := "xyz...", pubkey := "def...", createdAt := 1234567890, kind := 0, tags := [], content := "{...}", sig := "..." }
+#guard sendsAre 7 (runAll testHost testCfg sRQ.1 [.reply ⟨.relay, 0⟩ (.event ev0 "wss://relay.example.com"), .reply ⟨.relay, 0⟩ .eose]).2
+  ["{ \"type\": \"relay.query.result\", \"id\": \"c3\", \"events\": [{ \"event\": { \"id\": \"xyz...\", \"pubkey\": \"def...\", \"kind\": 0, \"content\": \"{...}\", \"tags\": [], \"created_at\": 1234567890, \"sig\": \"...\" }, \"sidecar\": { \"relayHints\": [\"wss://relay.example.com\"] } }] }"]
+#guard sendsAre 7 (post sRSub.1 7 "{ \"type\": \"relay.close\", \"id\": \"d4\", \"subId\": \"sub-1\" }").2
+  ["{ \"type\": \"relay.closed\", \"subId\": \"sub-1\" }"]
+
+/-! ### NAP-OUTBOX -/
+
+def sOP := post sU 7 "{ \"type\": \"outbox.publish\", \"id\": \"p2\", \"event\": { \"kind\": 1, \"content\": \"hi\", \"tags\": [] }, \"options\": { \"toOutbox\": false, \"relays\": [\"wss://relay.example.com\"] } }"
+def evO : NostrEvent := { id := "ev2...", pubkey := "def...", createdAt := 0, kind := 1, tags := [], content := "hi", sig := "s" }
+def sOPDone := runAll testHost testCfg sOP.1
+  ((calls sOP.2).map (fun (t, _) => Input.reply t (.signed (some evO))) ++ [.reply ⟨.outbox, 1⟩ (.published [("wss://relay.example.com", true)])])
+#guard sendsAre 7 sOPDone.2
+  ["{ \"type\": \"outbox.publish.result\", \"id\": \"p2\", \"ok\": true, \"event\": { \"id\": \"ev2...\", \"pubkey\": \"def...\", \"created_at\": 0, \"kind\": 1, \"tags\": [], \"content\": \"hi\", \"sig\": \"s\" }, \"eventId\": \"ev2...\", \"relays\": { \"wss://relay.example.com\": true } }"]
+
 end Napplet.Test
