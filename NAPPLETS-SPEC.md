@@ -661,8 +661,8 @@ MUST/security: exact string match on the full topic (shell MAY intercept `shell:
 topic unchanged; no delivery back to the emitter; `sender` derived from the authenticated endpoint;
 target must exist and be live before open; `inc.channel.opened` MUST be enqueued before a successful
 open result; auth checked once at open, not per message; shell MUST send `inc.channel.closed` to
-both sides on close, iframe removal or ACL revocation (reason `"peer destroyed"` on endpoint
-destruction); binding retains buffered events and the terminal closed record until a handler
+both sides on close, iframe removal or ACL revocation; on endpoint destruction it sends
+`inc.channel.closed` with reason `"peer destroyed"` to the surviving endpoint; binding retains buffered events and the terminal closed record until a handler
 registers, and on overflow MUST close the channel and notify both sides; broadcast excludes the
 sender and SHOULD NOT carry sensitive data; topic namespaces are not enforced, receivers SHOULD
 check `sender`. A compromised extension forging channel messages is an accepted trust boundary.
@@ -810,7 +810,8 @@ PRs #42 closed, #43 merged).
 | `bytesMany(urls)` | `resource.bytesMany` {id, urls} / `.result` {id, items} / `.error` | ordered per-URL results; `urls` non-empty |
 | cancel | `resource.cancel` {id} | late terminal envelopes for cancelled ids MUST be dropped |
 
-Every request gets exactly one terminal result or error envelope unless cancelled. `message` is
+Every `resource.info`, `resource.bytes` and `resource.bytesMany` request gets exactly one
+terminal result or error envelope unless cancelled; `resource.cancel` itself gets none. `message` is
 diagnostic only; programmatic handling uses `error`.
 
 Schemas: `ResourceSchemeInfo{scheme R, enabled R}`; `ResourceInfo{schemes R, maxBytes?, maxUrls?}`;
@@ -833,7 +834,7 @@ Schemes:
 | `data:` | MAY decode in shim; still size-limited, sniffed, SVG-rasterised, quota- and policy-checked |
 | `https:` | runtime fetch under full default policy |
 | `blossom:` | BUD-10 `blossom:<sha256>.<ext>`; runtime MUST verify SHA-256; `xs`/`as`/`sz` hints advisory |
-| `hashtree:` / `htree:` | `hashtree:<nhash>` (immutable, HTS-01 §6.2–6.3; bare nhash alias) and `htree://<npub-or-hex>/<tree>[/<path>][#k=<64-hex>]` (mutable, HTS-01 §9); verify root, nodes, chunks, CHK decryption; MUST NOT leak keys; `#private` subject to authorisation; `#link-visible` MUST be rejected; queries, bad escapes, unknown fragments, colon paths, directories = `invalid-request`; advertise both scheme names |
+| `hashtree:` / `htree:` | `hashtree:<nhash>` (immutable, HTS-01 §6.2–6.3; bare nhash alias) and `htree://<npub-or-hex>/<tree>[/<path>][#k=<64-hex>]` (mutable, HTS-01 §9); verify root, nodes, chunks, CHK decryption; MUST NOT leak keys; `#private` subject to authorisation; `#link-visible` MUST be rejected; queries, bad escapes, unknown fragments, colon paths, directories = `invalid-request`; HTS-01 `self` and petname aliases only when policy resolves them unambiguously, else `invalid-request`; advertise both scheme names |
 | `nostr:` | NIP-19; one hop; MUST NOT follow URLs or nostr refs in the result |
 | `http:` | not canonical; MUST NOT be enabled by default |
 | other | MUST return `unsupported-scheme` |
@@ -1034,7 +1035,8 @@ Key rules:
   MUST NOT change owner on command. Artwork MUST be fetched through NAP-RESOURCE.
 - MAY limit sessions, duck/mute, enforce single output, ignore seek on live, cap volume.
 
-Open issues: out-of-band source binding undefined; initial state/autoplay default after create;
+Open issues: out-of-band source binding undefined; the "session creation rejected" example
+carries `sessionId` although the prose says no session was created; initial state/autoplay default after create;
 no way to clear metadata fields.
 
 ### 15.13 NAP-NOTIFY (`notify`; no deps)
@@ -1054,6 +1056,10 @@ Schemas: `NotificationPayload{title R, body?, icon?, actions? (≤3 of {id R, la
 
 Errors: `"permission denied"`, `"rate limited"`, `"invalid channel"` (then nothing created).
 `granted: false` is not an error. Unknown ids MUST be ignored.
+
+Open issue: the upstream API table names the operations' wire types `notify.registerChannel` and
+`notify.requestPermission`, while its wire table and examples use `notify.channel.register` and
+`notify.permission.request` (the SDK and kehto use the latter).
 
 Shell MUST reply with same `id`; track notifications per napplet and remove them with the iframe;
 not block other messages while prompting. SHOULD render with its own UI, respect priority,
@@ -1151,6 +1157,10 @@ strings, LNURL secrets, preimages and keys out of the sandbox; reply with same `
 failure as success (`settled` needs backend confirmation). Consent UI SHOULD show amount, target,
 rail, recipient, comment and napplet. Allowances SHOULD bind napplet, rail, max amount, window and
 target. MAY use NWC, LNURL-pay or an internal wallet.
+
+Open issues: the wire table marks `quote`/`result`/`status` required, while policy failures before
+any transfer exists are top-level errors; preimages are both to be kept "out of the sandbox" and
+returned "when available and safe to disclose".
 
 ### 15.17 NAP-CVM (`cvm`; depends: `value` layering optional)
 

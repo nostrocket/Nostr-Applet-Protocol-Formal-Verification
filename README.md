@@ -13,12 +13,17 @@ upstream text as of November 2026.
 | Path | What it is |
 |---|---|
 | [`NAPPLETS-SPEC.md`](NAPPLETS-SPEC.md) | One-document digest of NIP-5D and all 21 NAPs. It covers the manifest, transport, identity, sandbox, every NAP's operations and wire messages, governance, tooling, and open review issues. It is a close paraphrase of the sources, not a verbatim copy. |
-| [`lean/`](lean/README.md) | A mechanised formal model of the protocol in Lean 4, with 246 machine-checked theorems. It covers the NIP-5D core and every live NAP. |
+| [`lean/`](lean/README.md) | An executable, mechanised model of a napplet shell in Lean 4: 818 machine-checked theorems and 511 evaluated vectors. It covers the NIP-5D core, every live NAP, the JSON wire codec, one composed runtime, the host interface and the napplet-side binding. |
 
 ## The Lean model
 
-The model restates the protocol as Lean definitions and proves safety properties
-about it. Some examples:
+The model restates the protocol as Lean definitions, composes every NAP into one
+transition function (`Runtime.step`: JSON in on a port, JSON and host actions out),
+and proves safety properties about it. A shell can be implemented from the
+definitions, the host interface in `lean/Napplet/Host.lean`, browser behaviour and
+the standards that file names; see
+[Implementing from this model](lean/README.md#implementing-from-this-model). Some
+examples of what is proved:
 
 - NAP messages are processed only from a bound port.
 - A dispatched message's sender identity always came from verified artifact bytes.
@@ -27,13 +32,16 @@ about it. Some examples:
 - Money moves only with consent or a covering allowance.
 - A retired media session never comes back.
 
-Several properties hold over every reachable shell state.
+- Teardown clears every NAP's per-endpoint state.
+
+Several properties hold over every reachable state of the composed runtime.
 
 It verifies the **design**, not any implementation. No proof connects the model to
-an actual shell or SDK. Browser guarantees (the iframe sandbox, CSP, an unforgeable
+an actual shell or SDK, but every definition is computable, so the model can serve
+as a test oracle. Browser guarantees (the iframe sandbox, CSP, an unforgeable
 `MessageEvent.source`) and cryptography are assumptions, not proofs.
 
-Building the model surfaced 28 points where the specs are silent or contradict
+Building the model surfaced many points where the specs are silent or contradict
 themselves. Each one, with the behaviour the model chose, is listed in
 [`lean/README.md`](lean/README.md#modelling-decisions-where-the-spec-is-silent).
 
@@ -50,7 +58,8 @@ cd lean && lake build
 cd lean && lake env lean Audit.lean
 ```
 
-`lake build` checks every proof and runs the conformance vectors. `Audit.lean`
+`lake build` checks every proof and runs the vectors, including end-to-end vectors
+that feed upstream example JSON through the composed runtime. `Audit.lean`
 prints the axioms behind the headline theorems. Only `propext`, `Classical.choice`
 and `Quot.sound` should appear. CI runs both, plus a `sorry` scan, on every push.
 

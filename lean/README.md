@@ -1,17 +1,17 @@
 # Napplet protocol: Lean 4 model
 
-A machine-checked model of the NIP-5D core, the five NAPs merged to
-`napplet/naps` `master` (SHELL, INTENT, INC, THEME, IDENTITY), and all fourteen live
-NAPs on open PR branches (STORAGE, RESOURCE, RELAY, OUTBOX, UPLOAD, VALUE, LINK, NOTIFY,
-DISPLAY, KEYS, POW, CONFIG, MEDIA, CVM): 246 theorems in all. Section numbers refer
-to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md).
+A machine-checked, executable model of a napplet shell: the NIP-5D core, all
+nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
+together, the host interface, and the napplet-side bootstrap and binding.
+818 theorems and 511 evaluated vectors (92 of them end to end through the
+composed runtime). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
+but the model was built from the upstream texts at the commits listed below.
 
 - Lean `v4.36.0`, no Mathlib, no dependencies.
 - No `sorry`. Proofs use only Lean's standard axioms (`propext`, `Classical.choice`,
-  `Quot.sound`). Cryptography is passed in as an opaque `Crypto` record, so the model
-  adds no axioms of its own.
-- Conformance vectors that need evaluation (string splitting, percent-decoding) are
-  `#guard` checks, run on every build.
+  `Quot.sound`). No `native_decide`.
+- Every definition is computable, so the model runs as a test oracle
+  (`Napplet/Test/Harness.lean`).
 
 ```bash
 cd lean && lake build
@@ -21,10 +21,91 @@ cd lean && lake build
 cd lean && lake env lean Audit.lean
 ```
 
-`Audit.lean` prints the axioms behind the headline theorems. CI fails if anything other
-than the three standard axioms appears.
+`lake build` checks every proof and runs every vector. `Audit.lean` prints the axioms
+behind the headline theorems; CI fails if anything other than the three standard
+axioms appears, and fails on any `sorry`.
+
+## Implementing from this model
+
+A shell implementation is a faithful port of four things.
+
+| What | Where | Notes |
+|---|---|---|
+| Entry point | `Napplet.Runtime.step` in [`Napplet/Runtime.lean`](Napplet/Runtime.lean) | `step : Host → Config → RtState → Input → RtState × List Output`. Start from `RtState.init cfg`. Inputs: browser events (`create`, `load`, `hello`, `windowMsg`, `portClosed`), `grant`, `message p json` (a JSON value posted on port `p`), `reply tag r`, `event e`, `tick now`. Outputs: `send p json`, browser actions (`iframeCreated`, `bound`, `closePort`, `removeFrame`, `rejected`), host `call tag c` and `effect e`. Generated from the component table by `scripts/gen_runtime.py`. |
+| Host interface | [`Napplet/Host.lean`](Napplet/Host.lean) | Everything the host supplies, each with its contract: pure functions (`Host`: SHA-256, signature checks, MIME sniffing, SVG rasterisation, ciphertext detection), asynchronous calls and replies (signing, encryption, decryption, fetch, prompts, relay pool, NIP-65, NAP-specific operations), effects, events, the clock, persistence, and the list of external standards. |
+| Shell configuration | `Runtime.Config` and each component's `Cfg` | Policy that is not a host call (exposure policy, quotas, rails, allowlists, limits). Defaults follow the upstream recommendations. |
+| Per-NAP behaviour | `Napplet/Run/<Name>.lean` | One component per NAP: `decode` (wire JSON → typed request, with upstream type strings, fields, errors), `encodeReq` (proved inverse of `decode`), `handle`, `onReply`, `onEvent`, `drop` (teardown), and the encoders for every result and push. Each file starts with its upstream wire summary and ends with vectors built from the upstream examples. |
+| Napplet side | [`Napplet/Binding.lean`](Napplet/Binding.lean), [`Napplet/BindingUri.lean`](Napplet/BindingUri.lean), [`Napplet/Nip19.lean`](Napplet/Nip19.lean) | Bootstrap (`napplet.hello` once), request ids and correlation, push buffering, sidecar hydration order, convention URI normalisation and `naddr` handler hints. |
+
+Identity: `checkManifest` (`Napplet/Manifest.lean`) computes the bound `Identity`
+from the signed manifest event and the artifact bytes: NIP-5D's `(dTag, artifactHash)`
+plus the publisher, kind and event id. Every NAP gets its endpoint context from the
+binding through one function, `Ctx.ofBinding` (`Napplet/Component.lean`), which gives
+the manifest key (`Identity.key`) used by the STORAGE, RESOURCE and CONFIG scopes, the
+INTENT catalog id (`Identity.catalogId`, kehto's encoding) and the INC endpoint id.
+
+### Upstream texts used
+
+| Spec | Source | Commit |
+|---|---|---|
+| NIP-5D | `dskvr/nips` branch `nip/5d` (nostr-protocol/nips#2303) | `f60550c3409d6d81a875088ec83e660571e10504` |
+| Web projection | `napplet/naps` `master` `projections/web.md` | `377bf939c6c906817084b43dd21d424de646dbc2` |
+| NAP-SHELL, NAP-INTENT, NAP-INC, NAP-THEME, NAP-IDENTITY | `napplet/naps` `master` | `377bf939c6c906817084b43dd21d424de646dbc2` |
+| NAP-RELAY | PR #2, `nub-relay` | `9f30b3505335a52c574ff570576687d6467021ff` |
+| NAP-STORAGE | PR #3, `nub-storage` | `4f4cf0ca7ecbd24c284a5d63bcd85e3de6af37ca` |
+| NAP-KEYS | PR #9, `nub-keys` | `8869a4cf77b023f4b049f47c546910a0280dc1a6` |
+| NAP-MEDIA | PR #10, `nub-media` | `7806f438530251fce5129f8e6239d6b642278759` |
+| NAP-NOTIFY | PR #11, `nub-notify` | `67877ef6c31ec8acee3125c1d8b4c781010e37dc` |
+| NAP-CONFIG | PR #14, `nub-config` | `bed9cb5b1e7c9b5babee8870aa18b12949af1d62` |
+| NAP-VALUE | PR #30, `nap-value` | `e468764d9f8a4f40107244cebed921bbebc0a0bf` |
+| NAP-CVM | PR #31, `nap-cvm` | `28cf1bdb5c6412bfbfcecb79a5a5121e18376f2f` |
+| NAP-OUTBOX | PR #32, `nap-outbox` | `8865f73d52a4864afee145f28d26520476273927` |
+| NAP-UPLOAD | PR #33, `nap-upload` | `f5cc981e527e2cc1572793a7a6e5082e5271ac49` |
+| NAP-POW | PR #39, `nap-pow` | `d85b4252f26fccd6c61bba18429ca9a6c0559210` |
+| NAP-LINK | PR #53, `nap-link` | `100e5c939ae6b1ea82cc58587c6da45a1cf8a760` |
+| NAP-RESOURCE | PR #80, `nub-resource` | `ae5b9c64ab8a4d8909f288829a01e99d6bd713bc` |
+| NAP-DISPLAY | PR #97, `nap-display` | `2c2e1b5ca3849dbab8c3a721704e30646a641079` |
+| SDK (where the text is silent) | `napplet/web` `main` | `49022721f5ed6067c158f1fee0a8daff6057d0e8` |
+| Reference runtime (where the text is silent) | `kehto/web` `main` | `3181ac164eee4a4fc96020c053e8df16d1938298` |
+
+All PRs were still open on 2026-11-21; none had merged since the digest was written.
 
 ## What is proved
+
+### The composed machine (`Napplet/Runtime.lean`)
+
+Over every `Runtime.Reachable` state:
+
+- `Reachable.inv`: the composed invariant holds. It contains the NIP-5D shell
+  invariant (`shell_inv`), says every bound port is listed, and says no NAP
+  component holds state for a port that is not bound.
+- `teardown_clears`: teardown clears every NAP's per-endpoint state, so a port that
+  is later bound again starts clean. `port_closed_teardown` and
+  `second_hello_teardown`: a closed port or a second `napplet.hello` closes the port,
+  removes the frame, drops the binding and grants, and leaves no state in any NAP.
+- `ctx_verified`: every endpoint context a component sees, which is its only source
+  of the sender's identity, came from verified artifact bytes and carries exactly the
+  policy exposure (lifts `dispatch_sender_verified`).
+- `message_unbound_silent`, `message_unexposed_silent`: JSON on an unbound port, or
+  for an unknown or unexposed domain, produces nothing.
+
+Each component proves `decode (encodeReq r) = .ok r` and lifts its NAP's pure
+results to what it actually emits. Examples: `Run.Relay.handle_sign`,
+`onReply_delivers_plaintext`, `Run.Outbox.onReply_publish_relays`,
+`Run.Resource.jobItems_policy` (no private hop, caps, sniffed MIME, no raw SVG),
+`Run.Resource.cancel_drops_late`, `Run.Upload.onReply_put_requires_policy`,
+`Run.Value.onReply_pay_authorized`, `Run.Link.onReply_opened_scheme_safe`,
+`Run.Keys.handle_inv`, `Run.Media.handle_inv`, `Run.Config.snapshot_valid`,
+`Run.Cvm.late_reply_dropped`, `Run.Pow.onReply_done_ok`, `Run.Inc.emit_delivery`,
+`Run.Intent.handle_sends`, `Run.Storage.handle_isolated`. `Audit.lean` lists them.
+
+### Napplet side
+
+`Binding.boot_once` (one hello per document), `request_fresh` (fresh request ids),
+`resolve_once` (a request settles once), `register_delivers_buffer` (retained pushes
+reach a late handler in order). `Nip19` and `BindingUri` carry their vectors.
+
+### Pure NAP models (`Napplet/Nap/*.lean`)
 
 | Module | Spec | Results |
 |---|---|---|
@@ -52,16 +133,32 @@ than the three standard axioms appears.
 | `Nap.Cvm` | §15.17 | `timeout_ok` (never clamped), `timeout_120s_accepted`, `paid_requires_authority`, `deny_never_pays`, `free_always_allowed`, `reserve_never_overspends`. `response_routed_to_owner`, `transport_ids_fresh`, `late_response_dropped`, `duplicate_response_dropped`, `registry_call_hash_checked`, `exactly_one_result`, `unimplemented_has_false`, `unimplemented_unsupported`. |
 | `Nap.Identity` | §15.5 | `handle_same_id`, `getPublicKey_no_error`, `change_notifies`, `signout_notifies`, `change_only_exposed`. Read-only by construction: `handle` returns no new state, and the request type has no signing or encryption operations. |
 
+### Existing theorems and upstream
+
+Every theorem from the earlier model still holds as stated about its own pure model.
+Three pure models are narrower than upstream, and the runtime components follow
+upstream instead:
+
+- `NapIntent.invoke` delivers with the sender's *endpoint* (`invoke_delivery`);
+  upstream's `IntentDelivery.sender` is the source's *catalog id*. `Run.Intent` uses
+  the catalog id.
+- `NapUpload.upload` answers a declined consent prompt with a top-level error;
+  upstream's own example returns a `cancelled` result. `Run.Upload` follows the
+  example, and `Run.Upload.gates_agree` relates the two.
+- `NapInc` carries payloads as text; upstream payloads are any JSON. `Run.Inc`
+  carries JSON and re-proves the delivery results.
+
+None of the earlier theorems is false against the upstream text.
+
 ## Assumptions (not proved)
 
-These are browser guarantees, modelled as the shape of the inputs:
-
-- The `WindowId` on an event is the true `MessageEvent.source`.
-- The ports listed in `hello` are the ports actually transferred.
-- The bootstrap's retained port is unreachable from napplet code. NIP-5D itself says
-  no platform mechanism enforces this.
-- The `sandbox="allow-scripts"` and CSP isolation hold.
-- `sha256` and signature checks are sound (`Crypto` is opaque).
+- The browser guarantees of the web projection: `Input.message p` really came from
+  the port the shell bound, `Input.hello w ports` reports the true
+  `MessageEvent.source` and transferred ports, the `sandbox="allow-scripts"` and CSP
+  isolation hold, and the bootstrap's retained port is unreachable from napplet code
+  (NIP-5D itself says no platform mechanism enforces this).
+- The host meets the contracts in `Napplet/Host.lean` (cryptography, signer,
+  network, prompts, storage servers, wallet, miner, ContextVM transport).
 
 ## Modelling decisions where the spec is silent
 
@@ -79,8 +176,11 @@ Each of these is a candidate clarification for the spec:
 5. **Unknown names in `R`.** These are treated as missing required domains.
 6. **INC `channel.open` to oneself.** This is not covered by the spec. The model
    rejects it as `"target not found"`.
-7. **INTENT explicit handler that is not authorised.** The model resolves to no
-   handler (`"no handler"`) and never falls back.
+7. **INTENT explicit handler that is not authorised.** The runtime asks the user
+   (`Call.prompt .intent "authorize"`); a refusal or an incompatible handler gives
+   `"invoke rejected"` (kehto's string), and it never falls back to a recommendation.
+   (The pure `NapIntent.resolve` still returns no handler for an unauthorised
+   explicit selection.)
 8. **RELAY: decrypted delivery keeps the original `id` and `sig`.** The model
    delivers the event with `content` replaced by plaintext, as the spec says. The
    result is an event whose signature no longer verifies. This is the open
@@ -144,11 +244,143 @@ Each of these is a candidate clarification for the spec:
 28. **POW: timeout.** A search that returns a nonce failing the target is treated
     as a timeout. The shell never returns a result below target.
 
+### Decisions added with the wire codec, composition and coverage
+
+Shared:
+
+29. **Repeated JSON members.** The last member with a name wins, as in browser
+    `JSON.parse` (`Json.get?`).
+30. **Event templates.** Upstream types templates as open maps. The shell reads
+    NIP-01 fields only: `kind` is required, `content` defaults to `""`, `tags` to `[]`
+    and `created_at` to the shell clock; other members are dropped before signing.
+31. **Malformed requests.** A known type with a malformed payload and a string `id`
+    gets its result envelope with the NAP's own error string where upstream defines
+    one for invalid input, else `"invalid request"`. Without a usable `id`, or for
+    fire-and-forget types, it is dropped. Unknown types are always silently ignored.
+    This matches kehto's practice.
+32. **Request ids on the napplet side.** The SDK uses `crypto.randomUUID()`; the model
+    uses a counter. Only freshness among pending requests matters.
+33. **Endpoint and catalog identifiers.** INC endpoint ids are `endpoint-<window>`
+    (window ids are never reused); catalog ids use kehto's `nip5d:<kind>:…` encoding.
+34. **Async host work.** Network, signer, prompts, wallet, storage servers, mining and
+    ContextVM are host calls with tagged replies; a reply whose tag the runtime no
+    longer holds (teardown, cancel) has no effect. Prompts never block other inputs.
+
+INC: subscriptions are a set per (endpoint, topic), so `inc.unsubscribe {topic}`
+removes it; channel ids are `c-<n>`; an open to an unknown, non-live, self or
+`inc`-unexposed target fails with `"target not found"`, ACL refusal with
+`"target denied"` and a channel cap with `"channel limit reached"` (kehto); endpoint
+destruction sends `"peer destroyed"` to the surviving peer only.
+
+INTENT: unknown request members (including any `sender`) are ignored; a malformed
+`request` gets `{ok:false, error:"invalid convention"}`; `"no handler"` when no
+candidate serves the role, `"unsupported convention"` when candidates exist but
+none matches; a hint address maps to the catalog id `nip5d:<address>`; one
+compatible candidate is used directly, several prompt a chooser; a default applies
+only if it supports the convention; accepted deliveries are retained FIFO until a
+target with that catalog id is bound (`Effect launch`), or the host reports
+`launchFailed`. Uninstalled-recommendation discovery (MAY) is not offered.
+
+RELAY: `relay.close` and a refused `subscribe` reply `relay.closed` (decision 9,
+also kehto); a refused query replies `{id, error:"policy denied"}`; scoped relay
+URLs must be `wss://` (`"invalid relay destination"`, kehto); `relay.eose` and the
+query result wait for in-flight decryptions of stored events; relay hints carry the
+relay an event was observed on; sidecar byte pre-resolution is never performed (a
+MAY; this satisfies default-off and every opt-out). Error strings not defined
+upstream follow kehto (`"no signer configured"`, `"publish failed"`, `"relay query
+closed"`).
+
+OUTBOX: reads route to the authors' allowed NIP-65 write relays, else fallback
+relays, plus allowed napplet hints, with `incomplete:true` when a list is missing;
+`resolveRelays` reports `source` `nip65` or `fallback` and an empty `policy` plan on
+error; an empty publish plan is `ok:false` with `"relay list unavailable"`;
+`outbox.close` replies `outbox.closed`; `timeoutMs` is enforced by the host closing
+the stream; the NIP-5D ciphertext check also applies to `outbox.publish`.
+
+RESOURCE: wire blobs are strict canonical base64 (non-canonical rejected); `data:`
+URLs are decoded in the model; duplicate in-flight ids are ignored (decision 13);
+at most 10 URLs per endpoint are in flight, the rest queue; the per-minute rate
+limit has no upstream error code and is not modelled; `resource.info.error` only
+when the shell does not disclose schemes; `htree` identifiers must be `npub` or
+64-hex (aliases rejected), and `nostr:` accepts only non-secret NIP-19 entities.
+
+UPLOAD: the structured-clone `Blob` is modelled as its byte list (a JSON array of
+bytes); a declined consent is a `cancelled` result per upstream's example; errors
+before an upload exists are top-level (upstream's open issue); `"unknown upload"`
+for an unknown status id (kehto); uploads up to 1 MiB answer `complete` directly,
+larger ones `uploading` then push; success requires the server's hash to match the
+bytes sent (`"server rejected"` otherwise).
+
+LINK: a missing URL is `invalid-url`; `http`/`https` without a host is
+`invalid-url`; with prompting off or too many outstanding prompts the answer is
+`blocked-by-policy`; the scheme is re-checked when the prompt is answered; rules
+are keyed by manifest key and a deny rule wins.
+
+NOTIFY: only the wire names `notify.channel.register` and
+`notify.permission.request` are decoded (upstream's API table also says
+`registerChannel`/`requestPermission`); permission is required by default and
+lasts for the endpoint's lifetime; ids are `shell-<n>`; more than three actions are
+truncated (MAY limit); `notify.controls` is pushed once per endpoint; a malformed
+`permission.request` gets `granted:false`.
+
+DISPLAY: device access is denied unless policy permits; checks run `not-found`,
+`unavailable`, `denied`, then the batch; a missing `displayId` is
+`"invalid request"`.
+
+KEYS: single-character keys are upper-cased before matching (`Ctrl+s` matches a
+`Ctrl+S` binding; upstream's examples use both, kehto upper-cases); a trailing `++`
+is the `+` key; re-registering an action id is `"duplicate action ID"` (kehto
+replaces); an unparseable `defaultKey` is `"invalid action"`; a forwarded combo that
+is bound also fires `keys.action` to the owner.
+
+MEDIA: creation errors are decided synchronously; later backend failures retire the
+session with reason `error`; a napplet's session id hint is honoured if fresh and not
+`shell-` prefixed; ids are never reused in a runtime session; out-of-range numbers
+are dropped; caller reasons on commands are replaced by `user`; a napplet-owned
+session that cannot pause on focus loss is retired with `policy`; a failed create
+result omits `sessionId` (upstream's prose; its example includes it).
+
+CONFIG: a rejected schema is reported only in `config.registerSchema.result`;
+unknown standard keywords are `invalid-schema`; `$schema` may be draft-07, 2019-09 or
+2020-12; a lower version is `version-conflict`; defaults resolve persisted → own
+default → ancestor default, invalid candidates skipped (decision 26); secrets
+resolve only from a persisted value; orphaned properties are pruned when a schema is
+accepted; schemas persist per scope; `openSettings` without a schema is ignored.
+
+VALUE: errors before a transfer exists are top-level (upstream's wire table marks
+`result` required); preimages are not disclosed by default (upstream says both
+"keep out of the sandbox" and "when safe to disclose"); `"transfer not found"` for
+an unknown status id (kehto); a zero amount is out of policy; a zap target needs a
+pubkey or address.
+
+CVM: each network operation has a host timer for its deadline; payment gates
+return to the shell as an offer and are settled only after `decidePay`; payments
+are off by default (`"payment required"`); the registry is off by default
+(`"unsupported method"`, `registry.has` → `false`); only server notifications and
+requests become `cvm.event`.
+
+POW: FIFO scheduling (priority reported, not used); rejections carry
+`state:"error"`; the host's nonce is re-checked in the shell and a miss is
+`"timeout"` (decision 28); `pause`/`resume` without `jobId` act on the whole miner;
+publish asks for consent by default; NIP-01 ids and leading-zero bits are computed in
+the model.
+
 ## Not modelled yet
 
-RESOURCE's `hashtree`/`htree`/`nostr` scheme details and
-canonical base64; message payload schemas beyond what the proofs need; NIP-19
-`naddr` decoding; and the deferred CLASS and CONNECT tracks.
+- The deferred CLASS and CONNECT tracks.
+- Behaviour upstream leaves undefined:
+  - NAP-MEDIA's out-of-band source binding.
+  - NIP-59 gift-wrap decryption depth (the host's `encryptedWith`/`decrypt` decide it).
+  - Carrier attachment of NAP-RESOURCE sidecars (NAP-RESOURCE defers it to the
+    carrier specs; NAP-RELAY's attachment is never produced, see RELAY above).
+  - Cancelling an in-progress upload (NAP-UPLOAD has no wire message for it).
+  - Paged `relay.query` (`stream: true`), proposed in review but absent.
+
+Optional behaviours the model leaves out on purpose (all MAY or unquantified SHOULD):
+INC `shell:*` topic interception and emit ACLs, INTENT discovery of uninstalled
+recommendations, RESOURCE single-flight caching and per-minute rate limits, MEDIA
+promoted (detached) playback, CONFIG's `config.settingsOpened` acknowledgement and
+`$version` migration across artifact hashes.
 
 ## Licence
 
