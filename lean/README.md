@@ -83,9 +83,20 @@ correlation, teardown, buffering, scopes, identity derivation, the JSON Schema c
 subset for NAP-CONFIG, NIP-19 `naddr` decoding, base64, `data:` URLs, NIP-13
 difficulty) is defined by the Lean definitions.
 
-The host interface is part of the model, not an input to it: `Napplet/Host.lean`
-states each host function, call, effect and event with its contract. Meeting those
-contracts takes only items 1 and 2, as follows:
+The five items under "Not modelled yet" that upstream leaves undefined need nothing
+either. The model's behaviour for each is fixed:
+- MEDIA out-of-band source binding: there is no such binding. Shell-owned playback
+  uses the `source` given at create.
+- Gift-wrap depth: decided by `Host.encryptedWith` and `Call.decrypt` (NIP-17/59).
+- Resource sidecar carriers: no sidecar resources are ever sent.
+- Upload cancel: no wire message exists, so there is nothing to handle.
+- Paged `relay.query`: not part of the wire.
+
+### How the host contracts are met
+
+This is not a list of further inputs: every host function, call, effect and event
+is a contract written in `Napplet/Host.lean`, inside the model. The table only shows
+which of the two items above meets each one.
 
 | Host contract (in the model) | Met with |
 |---|---|
@@ -98,15 +109,6 @@ contracts takes only items 1 and 2, as follows:
 | Persistence | Storing the runtime state across reloads with browser storage. Which fields persist is stated in the contract. |
 | Clock | `Input.tick now` from the browser clock. |
 | Hashing, sniffing, rasterising | FIPS 180-4, WHATWG MIME Sniffing, SVG rendering in an isolated browser context. |
-
-The five items under "Not modelled yet" that upstream leaves undefined need nothing
-either. The model's behaviour for each is fixed:
-- MEDIA out-of-band source binding: there is no such binding. Shell-owned playback
-  uses the `source` given at create.
-- Gift-wrap depth: decided by `Host.encryptedWith` and `Call.decrypt` (NIP-17/59).
-- Resource sidecar carriers: no sidecar resources are ever sent.
-- Upload cancel: no wire message exists, so there is nothing to handle.
-- Paged `relay.query`: not part of the wire.
 
 ### Upstream texts used
 
