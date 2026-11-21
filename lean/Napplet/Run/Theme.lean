@@ -98,6 +98,8 @@ def sendOut (o : ThemeOut) : Eff := .send (encodeOut o).1 (encodeOut o).2
 def handle (_h : Host) (_w : World) (cx : Ctx) (s : St) : Req → St × List Eff
   | .get id => (s, [sendOut (get cx.port id s.current)])
 
+def onReply (_h : Host) (_w : World) (s : St) (_n : Nat) (_r : Reply) : St × List Eff := (s, [])
+
 def onEvent (_h : Host) (w : World) (s : St) : HostEvent → St × List Eff
   | .themeChanged (some j) =>
     match themeOf? j with
@@ -151,6 +153,21 @@ theorem payload_has_colors (t : Theme) :
     simp [themeJson, Json.mkObj, Json.get?, Json.lookup, Json.getStr?]
 
 theorem drop_clears (s : St) (p : PortId) : mentions (drop s p).1 p = false := rfl
+
+theorem drop_mentions (s : St) (p q : PortId) (h : mentions (drop s p).1 q = true) :
+    mentions s q = true := by simp [drop, mentions] at h
+
+theorem handle_mentions (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (q : PortId)
+    (hcx : cx ∈ w.live) (hm : mentions (handle h w cx s r).1 q = true) :
+    mentions s q = true ∨ w.bound q := by simp [mentions] at hm
+
+theorem onReply_mentions (h : Host) (w : World) (s : St) (n : Nat) (rep : Reply) (q : PortId)
+    (hm : mentions (onReply h w s n rep).1 q = true) : mentions s q = true ∨ w.bound q := by
+  simp [mentions] at hm
+
+theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : PortId)
+    (hm : mentions (onEvent h w s e).1 q = true) : mentions s q = true ∨ w.bound q := by
+  simp [mentions] at hm
 
 /-! ### Vectors -/
 

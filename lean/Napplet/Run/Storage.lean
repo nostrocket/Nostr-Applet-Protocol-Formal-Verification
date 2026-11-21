@@ -102,6 +102,10 @@ def handle (_h : Host) (_w : World) (cx : Ctx) (s : St) (r : Req) : St × List E
   let (store', res) := NapStorage.handle s.quota s.store cx.storage r
   ({ s with store := store' }, [.send cx.port (encodeResult r res)])
 
+def onReply (_h : Host) (_w : World) (s : St) (_n : Nat) (_r : Reply) : St × List Eff := (s, [])
+
+def onEvent (_h : Host) (_w : World) (s : St) (_e : HostEvent) : St × List Eff := (s, [])
+
 def drop (s : St) (_p : PortId) : St × List Eff := (s, [])
 
 def mentions (_s : St) (_p : PortId) : Bool := false
@@ -137,6 +141,21 @@ theorem handle_quota (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req)
   NapStorage.quota_preserved _ r hq
 
 theorem drop_clears (s : St) (p : PortId) : mentions (drop s p).1 p = false := rfl
+
+theorem drop_mentions (s : St) (p q : PortId) (h : mentions (drop s p).1 q = true) :
+    mentions s q = true := by simp [drop, mentions] at h
+
+theorem handle_mentions (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (q : PortId)
+    (hcx : cx ∈ w.live) (hm : mentions (handle h w cx s r).1 q = true) :
+    mentions s q = true ∨ w.bound q := by simp [mentions] at hm
+
+theorem onReply_mentions (h : Host) (w : World) (s : St) (n : Nat) (rep : Reply) (q : PortId)
+    (hm : mentions (onReply h w s n rep).1 q = true) : mentions s q = true ∨ w.bound q := by
+  simp [mentions] at hm
+
+theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : PortId)
+    (hm : mentions (onEvent h w s e).1 q = true) : mentions s q = true ∨ w.bound q := by
+  simp [mentions] at hm
 
 /-! ### Vectors (upstream examples) -/
 

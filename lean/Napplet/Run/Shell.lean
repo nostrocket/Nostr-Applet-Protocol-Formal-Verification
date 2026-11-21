@@ -52,6 +52,10 @@ def handle (h : Host) (_w : World) (cx : Ctx) (s : St) : Req → St × List Eff
     if cx.port ∈ s.sent then (s, [])
     else (⟨cx.port :: s.sent⟩, [.send cx.port (envJson (environment h cx))])
 
+def onReply (_h : Host) (_w : World) (s : St) (_n : Nat) (_r : Reply) : St × List Eff := (s, [])
+
+def onEvent (_h : Host) (_w : World) (s : St) (_e : HostEvent) : St × List Eff := (s, [])
+
 def drop (s : St) (p : PortId) : St × List Eff := (⟨s.sent.filter (· != p)⟩, [])
 
 def mentions (s : St) (p : PortId) : Bool := s.sent.contains p
@@ -89,6 +93,12 @@ theorem handle_mentions (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (q 
     rcases hm with rfl | hm
     · exact .inr ⟨cx, hcx, rfl⟩
     · exact .inl hm
+
+theorem onReply_mentions (h : Host) (w : World) (s : St) (n : Nat) (rep : Reply) (q : PortId)
+    (hm : mentions (onReply h w s n rep).1 q = true) : mentions s q = true ∨ w.bound q := .inl hm
+
+theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : PortId)
+    (hm : mentions (onEvent h w s e).1 q = true) : mentions s q = true ∨ w.bound q := .inl hm
 
 #guard decode (Json.parse! "{ \"type\": \"shell.ready\" }") matches .ok .ready
 #guard decode (Json.parse! "{ \"type\": \"shell.hello\" }") matches .unknown

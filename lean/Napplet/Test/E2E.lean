@@ -93,4 +93,46 @@ def sFollowsDone := Runtime.step testHost testCfg sFollows.1
 #guard (Runtime.step testHost testCfg (Runtime.step testHost testCfg sFollows.1 (.portClosed 7)).1
   (.reply ⟨.identity, 0⟩ (.json (Json.parse! "{ \"pubkeys\": [] }")))).2 == []
 
+/-! ### NAP-INC -/
+
+def sAB : RtState := booted [(1, 7, "social-feed"), (2, 8, "profile-viewer")]
+
+def sSub := post sAB 8 "{ \"type\": \"inc.subscribe\", \"id\": \"a1\", \"topic\": \"napplet:profile/open\" }"
+#guard sendsAre 8 sSub.2 ["{ \"type\": \"inc.subscribe.result\", \"id\": \"a1\" }"]
+def sEmit := post sSub.1 7 "{ \"type\": \"inc.emit\", \"topic\": \"napplet:profile/open\", \"payload\": { \"pubkey\": \"abc123...\" } }"
+#guard sendsAre 8 sEmit.2
+  ["{ \"type\": \"inc.event\", \"topic\": \"napplet:profile/open\", \"sender\": \"endpoint-1\", \"payload\": { \"pubkey\": \"abc123...\" } }"]
+#guard sentTo 7 sEmit.2 == []
+
+def sOpen := post sAB 7 "{ \"type\": \"inc.channel.open\", \"id\": \"ch1\", \"target\": \"endpoint-2\" }"
+#guard sendsAre 8 sOpen.2 ["{ \"type\": \"inc.channel.opened\", \"channelId\": \"c-0\", \"peer\": \"endpoint-1\" }"]
+#guard sendsAre 7 sOpen.2 ["{ \"type\": \"inc.channel.open.result\", \"id\": \"ch1\", \"channelId\": \"c-0\", \"peer\": \"endpoint-2\" }"]
+#guard sendsAre 8 (post sOpen.1 7 "{ \"type\": \"inc.channel.emit\", \"channelId\": \"c-0\", \"payload\": { \"command\": \"play\", \"track\": 3 } }").2
+  ["{ \"type\": \"inc.channel.event\", \"channelId\": \"c-0\", \"sender\": \"endpoint-1\", \"payload\": { \"command\": \"play\", \"track\": 3 } }"]
+-- the opener's window goes away: the peer gets "peer destroyed"
+#guard sendsAre 8 (Runtime.step testHost testCfg sOpen.1 (.portClosed 7)).2
+  ["{ \"type\": \"inc.channel.closed\", \"channelId\": \"c-0\", \"reason\": \"peer destroyed\" }"]
+#guard sendsAre 7 (post sAB 7 "{ \"type\": \"inc.channel.open\", \"id\": \"ch1\", \"target\": \"endpoint-media-player\" }").2
+  ["{ \"type\": \"inc.channel.open.result\", \"id\": \"ch1\", \"error\": \"target not found\" }"]
+
+/-! ### NAP-INTENT -/
+
+def viewerId : String := "nip5d:35129:" ++ publisher ++ ":profile-viewer"
+def catalogText : String :=
+  "{\"entries\":[{\"id\":\"" ++ viewerId ++ "\",\"title\":\"Profile Viewer\",\"z\":[\"profile\"],\"i\":[[\"napplet:profile/open\",\"pubkey\"]]}]}"
+def sCat := runAll testHost testCfg sAB
+  [.event (.nap .intent "catalog" (Json.parse! catalogText)),
+   .event (.nap .intent "default" (Json.parse! ("{\"archetype\":\"profile\",\"handler\":\"" ++ viewerId ++ "\"}")))]
+
+#guard sendsAre 7 (post sCat.1 7 "{ \"type\": \"intent.available\", \"id\": \"a1\", \"archetype\": \"profile\" }").2
+  ["{ \"type\": \"intent.available.result\", \"id\": \"a1\", \"availability\": { \"archetype\": \"profile\", \"available\": true, \"candidates\": [{ \"id\": \"" ++ viewerId ++ "\", \"title\": \"Profile Viewer\", \"actions\": [\"open\"], \"conventions\": [\"napplet:profile/open\"], \"contracts\": [{ \"convention\": \"napplet:profile/open\", \"params\": [\"pubkey\"] }], \"isDefault\": true }], \"hasDefault\": true } }"]
+
+def sInv := post sCat.1 7 "{ \"type\": \"intent.invoke\", \"id\": \"i1\", \"request\": { \"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\", \"payload\": { \"pubkey\": \"abc123...\" } } }"
+#guard sendsAre 7 sInv.2
+  ["{ \"type\": \"intent.invoke.result\", \"id\": \"i1\", \"result\": { \"ok\": true, \"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\", \"handler\": \"" ++ viewerId ++ "\" } }"]
+#guard sendsAre 8 sInv.2
+  ["{ \"type\": \"intent.deliver\", \"delivery\": { \"sender\": \"nip5d:35129:" ++ publisher ++ ":social-feed\", \"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\", \"payload\": { \"pubkey\": \"abc123...\" } } }"]
+#guard sendsAre 7 (post sCat.1 7 "{ \"type\": \"intent.invoke\", \"id\": \"i2\", \"request\": { \"archetype\": \"emoji-list\", \"action\": \"open\", \"convention\": \"napplet:emoji-list/open\" } }").2
+  ["{ \"type\": \"intent.invoke.result\", \"id\": \"i2\", \"result\": { \"ok\": false, \"error\": \"no handler\" } }"]
+
 end Napplet.Test

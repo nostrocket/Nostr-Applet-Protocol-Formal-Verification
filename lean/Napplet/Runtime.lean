@@ -8,28 +8,34 @@ import Napplet.Run.Shell
 import Napplet.Run.Theme
 import Napplet.Run.Identity
 import Napplet.Run.Storage
+import Napplet.Run.Inc
+import Napplet.Run.Intent
 
 /-!
 # The composed runtime
 
 `Runtime.step` is the whole shell: one input in (a browser event, a JSON message on
 a port, a host reply or event, a clock tick), a list of outputs out (JSON messages
-on ports, browser actions, host calls and effects).
+on ports, browser actions, host calls and effects). This file is generated from
+the component table (one component per NAP, `Napplet/Run/*.lean`).
 
 * Browser events go to `Shell.step` (NIP-5D transport and identity).
 * A JSON message on port `p` becomes an envelope `{type, id}`; `Shell.step` decides
   whether it is processed at all (bound port, known and exposed domain). If it is,
   the domain's component decodes the full JSON and handles it with the endpoint
   context `Ctx.ofBinding` derived from the binding.
-* Every `closePort` the shell emits tears the endpoint down in every component.
+* Every `closePort` the shell emits tears the endpoint down in every component;
+  then retained intent deliveries are flushed to newly ready targets.
 * Host replies are routed by the call tag's domain; host events go to every
   component.
 
-Main results (`Runtime.Inv`, over every reachable state):
-* the NIP-5D shell invariant (`Shell.Inv`) holds;
-* no component holds state for a port that is not bound, so teardown clears every
-  NAP's per-endpoint state and a later binding of the same port starts clean;
-* JSON on an unbound port, or with an unknown or unexposed type, produces nothing.
+Main results (over every reachable state, `Runtime.Reachable`):
+* `shell_inv`: the NIP-5D shell invariant (`Shell.Inv`) holds;
+* `teardown_clears`: no component holds state for a port that is not bound, so
+  teardown clears every NAP's per-endpoint state and a later binding of the same
+  port starts clean; `port_closed_teardown`;
+* `message_unbound_silent`, `message_unexposed_silent`: JSON on an unbound port, or
+  of an unknown or unexposed domain, produces nothing.
 -/
 
 namespace Napplet.Runtime
@@ -38,6 +44,8 @@ namespace Napplet.Runtime
 structure Config where
   shell : ShellConfig
   storageQuota : Nat := NapStorage.defaultQuota
+  incCfg : Run.Inc.Cfg := {}
+  intentCfg : Run.Intent.Cfg := {}
 
 structure RtState where
   shell : ShellState
@@ -52,6 +60,8 @@ structure RtState where
   theme : Run.Theme.St
   identity : Run.Identity.St
   storage : Run.Storage.St
+  inc : Run.Inc.St
+  intent : Run.Intent.St
 
 def RtState.init (cfg : Config) : RtState where
   shell := .init
@@ -59,21 +69,26 @@ def RtState.init (cfg : Config) : RtState where
   ports := []
   now := 0
   user := ""
-  shellNap := .init
-  theme := .init
-  identity := .init
-  storage := .init cfg.storageQuota
+  shellNap := Run.Shell.St.init
+  theme := Run.Theme.St.init
+  identity := Run.Identity.St.init
+  storage := Run.Storage.St.init cfg.storageQuota
+  inc := Run.Inc.St.init cfg.incCfg
+  intent := Run.Intent.St.init cfg.intentCfg
 
 inductive Input where
   /-- Run manifest `m` with fetched artifact `bytes` in new window `w` (NIP-5D
   §Identity step 2); `inst` is the host's stable instance id for this window. -/
   | create (w : WindowId) (m : ManifestEvent) (bytes : Bytes) (inst : Nat)
+  /-- The iframe's `load` event. -/
   | load (w : WindowId)
   /-- `{type: "napplet.hello"}` from window `w` with these transferred ports. -/
   | hello (w : WindowId) (ports : List PortId)
   /-- Any other window-level message from window `w`. -/
   | windowMsg (w : WindowId)
+  /-- The port closed or errored. -/
   | portClosed (p : PortId)
+  /-- Shell policy attaches a grant to the session on port `p`. -/
   | grant (p : PortId) (g : Grant)
   /-- A message posted on port `p` (structured clone of a JSON value). -/
   | message (p : PortId) (msg : Json)
@@ -82,12 +97,14 @@ inductive Input where
   | tick (now : Nat)
 
 inductive Output where
+  /-- Post this JSON message on port `to`. -/
   | send (to : PortId) (msg : Json)
   | rejected (w : WindowId) (e : ManifestError)
   /-- Create the `srcdoc` iframe for `w` with `sandbox="allow-scripts"`, the verified
   bytes, the bootstrap, and a `window.napplet` namespace holding exactly `exposed`. -/
   | iframeCreated (w : WindowId) (id : Identity) (exposed : List Domain)
   | bound (w : WindowId) (p : PortId) (id : Identity)
+  /-- Call `close()` on the port. -/
   | closePort (p : PortId)
   | removeFrame (w : WindowId)
   | call (tag : CallTag) (c : Call)
@@ -120,10 +137,17 @@ NIP-5D message and is dropped. -/
 def envOf? (j : Json) : Option Envelope :=
   (j.getStr? "type").map fun t => { type := t, id := j.getStr? "id" }
 
+/-- Per-component: does it hold state for port `p`? -/
+def mentionsList (s : RtState) (p : PortId) : List Bool :=
+  [Run.Shell.mentions s.shellNap p,
+   Run.Theme.mentions s.theme p,
+   Run.Identity.mentions s.identity p,
+   Run.Storage.mentions s.storage p,
+   Run.Inc.mentions s.inc p,
+   Run.Intent.mentions s.intent p]
+
 /-- Any component holds state for port `p`. -/
-def mentions (s : RtState) (p : PortId) : Bool :=
-  Run.Shell.mentions s.shellNap p || Run.Theme.mentions s.theme p ||
-  Run.Identity.mentions s.identity p || Run.Storage.mentions s.storage p
+def mentions (s : RtState) (p : PortId) : Bool := (mentionsList s p).any id
 
 /-! ### Steps -/
 
@@ -134,7 +158,7 @@ def lift {α σ : Type} (dec : Decoded α) (port : PortId) (run : α → σ × L
   | .reject rs => (s, rs.map (.send port))
   | .unknown => (s, [])
 
-/-- Hand a decoded JSON message to domain `d`'s component. -/
+/-- Hand a JSON message to domain `d`'s component. -/
 def napStep (h : Host) (w : World) (cx : Ctx) (s : RtState) (j : Json) : Domain → RtState × List Output
   | .shell => lift (Run.Shell.decode j) cx.port (Run.Shell.handle h w cx s.shellNap)
       (fun st => { s with shellNap := st }) s
@@ -144,16 +168,22 @@ def napStep (h : Host) (w : World) (cx : Ctx) (s : RtState) (j : Json) : Domain 
       (fun st => { s with identity := st }) s
   | .storage => lift (Run.Storage.decode j) cx.port (Run.Storage.handle h w cx s.storage)
       (fun st => { s with storage := st }) s
+  | .inc => lift (Run.Inc.decode j) cx.port (Run.Inc.handle h w cx s.inc)
+      (fun st => { s with inc := st }) s
+  | .intent => lift (Run.Intent.decode j) cx.port (Run.Intent.handle h w cx s.intent)
+      (fun st => { s with intent := st }) s
   | _ => (s, [])
 
 /-- Tear endpoint `p` down in every component. -/
 def dropAll (s : RtState) (p : PortId) : RtState × List Output :=
-  let (a, ea) := Run.Shell.drop s.shellNap p
-  let (b, eb) := Run.Theme.drop s.theme p
-  let (c, ec) := Run.Identity.drop s.identity p
-  let (d, ed) := Run.Storage.drop s.storage p
-  ({ s with shellNap := a, theme := b, identity := c, storage := d },
-   (ea ++ eb ++ ec ++ ed).map ofEff)
+  let (c0, e0) := Run.Shell.drop s.shellNap p
+  let (c1, e1) := Run.Theme.drop s.theme p
+  let (c2, e2) := Run.Identity.drop s.identity p
+  let (c3, e3) := Run.Storage.drop s.storage p
+  let (c4, e4) := Run.Inc.drop s.inc p
+  let (c5, e5) := Run.Intent.drop s.intent p
+  ({ s with shellNap := c0, theme := c1, identity := c2, storage := c3, inc := c4, intent := c5 },
+   (e0 ++ e1 ++ e2 ++ e3 ++ e4 ++ e5).map ofEff)
 
 def closedPorts : List Napplet.Output → List PortId
   | [] => []
@@ -172,19 +202,40 @@ def boundPorts : List Napplet.Output → List PortId
   | .bound _ p _ :: os => p :: boundPorts os
   | _ :: os => boundPorts os
 
-/-- A browser event: the NIP-5D shell, then teardown of every closed port. -/
+/-- Deliver retained intent deliveries to targets that are now ready. -/
+def flushStep (h : Host) (s : RtState) : RtState × List Output :=
+  let (st, effs) := Run.Intent.flush h (world s) s.intent
+  ({ s with intent := st }, effs.map ofEff)
+
+/-- A browser event: the NIP-5D shell, teardown of every closed port, then flush. -/
 def browserStep (h : Host) (cfg : Config) (s : RtState) (e : Event) : RtState × List Output :=
   let (sh, outs) := Napplet.step h.crypto cfg.shell s.shell e
   let s1 := { s with shell := sh, ports := boundPorts outs ++ s.ports }
   let (s2, drops) := dropPorts s1 (closedPorts outs)
-  (s2, outs.flatMap ofShell ++ drops)
+  let (s3, fl) := flushStep h s2
+  (s3, outs.flatMap ofShell ++ drops ++ fl)
 
 def replyStep (h : Host) (s : RtState) (tag : CallTag) (r : Reply) : RtState × List Output :=
   let w := world s
   match tag.domain with
+  | .shell =>
+    let (st, effs) := Run.Shell.onReply h w s.shellNap tag.n r
+    ({ s with shellNap := st }, effs.map ofEff)
+  | .theme =>
+    let (st, effs) := Run.Theme.onReply h w s.theme tag.n r
+    ({ s with theme := st }, effs.map ofEff)
   | .identity =>
     let (st, effs) := Run.Identity.onReply h w s.identity tag.n r
     ({ s with identity := st }, effs.map ofEff)
+  | .storage =>
+    let (st, effs) := Run.Storage.onReply h w s.storage tag.n r
+    ({ s with storage := st }, effs.map ofEff)
+  | .inc =>
+    let (st, effs) := Run.Inc.onReply h w s.inc tag.n r
+    ({ s with inc := st }, effs.map ofEff)
+  | .intent =>
+    let (st, effs) := Run.Intent.onReply h w s.intent tag.n r
+    ({ s with intent := st }, effs.map ofEff)
   | _ => (s, [])
 
 def newUser (s : RtState) : HostEvent → String
@@ -193,11 +244,16 @@ def newUser (s : RtState) : HostEvent → String
 
 def eventStep (h : Host) (s : RtState) (e : HostEvent) : RtState × List Output :=
   let w := world s
-  let (th, e1) := Run.Theme.onEvent h w s.theme e
-  let (idn, e2) := Run.Identity.onEvent h w s.identity e
-  ({ s with theme := th, identity := idn, user := newUser s e }, (e1 ++ e2).map ofEff)
+  let (c0, e0) := Run.Shell.onEvent h w s.shellNap e
+  let (c1, e1) := Run.Theme.onEvent h w s.theme e
+  let (c2, e2) := Run.Identity.onEvent h w s.identity e
+  let (c3, e3) := Run.Storage.onEvent h w s.storage e
+  let (c4, e4) := Run.Inc.onEvent h w s.inc e
+  let (c5, e5) := Run.Intent.onEvent h w s.intent e
+  ({ s with shellNap := c0, theme := c1, identity := c2, storage := c3, inc := c4, intent := c5, user := newUser s e },
+   (e0 ++ e1 ++ e2 ++ e3 ++ e4 ++ e5).map ofEff)
 
-/-- The composed transition function. -/
+/-- The composed transition function: the whole shell. -/
 def step (h : Host) (cfg : Config) (s : RtState) : Input → RtState × List Output
   | .create w m bytes inst =>
     let s' := if (s.shell.frames w).isNone then { s with inst := upd s.inst w inst } else s
@@ -273,40 +329,50 @@ theorem world_bound {s : RtState} {q : PortId} (hq : (world s).bound q) :
   obtain ⟨p, -, b, hb, rfl⟩ := hc
   exact ⟨b, hb⟩
 
-theorem ctxOf_live {s : RtState} {p : PortId} {cx : Ctx} (hi : ∀ p b, s.shell.bindings p = some b → p ∈ s.ports)
+theorem ctxOf_live {s : RtState} {p : PortId} {cx : Ctx}
+    (hi : ∀ p b, s.shell.bindings p = some b → p ∈ s.ports)
     (h : ctxOf s p = some cx) : cx ∈ (world s).live := by
   simp only [world, List.mem_filterMap]
   simp only [ctxOf, Option.map_eq_some_iff] at h
   obtain ⟨b, hb, _⟩ := h
   exact ⟨p, hi p b hb, by simp [ctxOf, hb]; assumption⟩
 
-theorem ctxOf_port {s : RtState} {p : PortId} {cx : Ctx} (h : ctxOf s p = some cx) : cx.port = p := by
-  simp only [ctxOf, Option.map_eq_some_iff] at h
-  obtain ⟨b, -, rfl⟩ := h
-  rfl
+/-- Pointwise relation between two lists of the same length. -/
+def Pw (R : Bool → Bool → Prop) : List Bool → List Bool → Prop
+  | [], [] => True
+  | a :: l, b :: l' => R a b ∧ Pw R l l'
+  | _, _ => False
 
-/-- Clean after one component changes: its new mentions are old ones or bound ports. -/
-theorem mentions_cases {s s' : RtState} {q : PortId}
-    (h : mentions s' q = true)
-    (hsh : Run.Shell.mentions s'.shellNap q = true → Run.Shell.mentions s.shellNap q = true ∨ (world s).bound q)
-    (hth : Run.Theme.mentions s'.theme q = true → Run.Theme.mentions s.theme q = true ∨ (world s).bound q)
-    (hid : Run.Identity.mentions s'.identity q = true → Run.Identity.mentions s.identity q = true ∨ (world s).bound q)
-    (hst : Run.Storage.mentions s'.storage q = true → Run.Storage.mentions s.storage q = true ∨ (world s).bound q) :
-    mentions s q = true ∨ (world s).bound q := by
-  simp only [mentions, Bool.or_eq_true] at h ⊢
-  rcases h with ((h | h) | h) | h
-  · rcases hsh h with h | h
-    · exact .inl (.inl (.inl (.inl h)))
-    · exact .inr h
-  · rcases hth h with h | h
-    · exact .inl (.inl (.inl (.inr h)))
-    · exact .inr h
-  · rcases hid h with h | h
-    · exact .inl (.inl (.inr h))
-    · exact .inr h
-  · rcases hst h with h | h
-    · exact .inl (.inr h)
-    · exact .inr h
+/-- Monotonicity of `any` along a pointwise implication. -/
+theorem any_imp {P : Prop} : ∀ {l l' : List Bool},
+    Pw (fun a b => a = true → b = true ∨ P) l' l → l'.any id = true → l.any id = true ∨ P
+  | [], [], _, h => by simp at h
+  | [], _ :: _, hf, _ => hf.elim
+  | _ :: _, [], hf, _ => hf.elim
+  | b :: l, a :: l', hf, h => by
+    rcases hf with ⟨h1, h2⟩
+    simp only [List.any_cons, id, Bool.or_eq_true] at h ⊢
+    rcases h with h | h
+    · rcases h1 h with h | h
+      · exact .inl (.inl h)
+      · exact .inr h
+    · rcases any_imp h2 h with h | h
+      · exact .inl (.inr h)
+      · exact .inr h
+
+/-- A state change whose new mentions are old ones or bound ports keeps `Inv`. -/
+theorem Inv.of_mentions {h : Host} {cfg : Config} {s s' : RtState} (hi : Inv h cfg s)
+    (hsh : s'.shell = s.shell) (hpo : s'.ports = s.ports)
+    (hm : ∀ q, Pw (fun a b => a = true → b = true ∨ (world s).bound q)
+      (mentionsList s' q) (mentionsList s q)) : Inv h cfg s' := by
+  refine ⟨hsh ▸ hi.shell, hsh ▸ hpo ▸ hi.ports, ?_⟩
+  intro q hq
+  rw [hsh] at hq
+  cases hmq : mentions s' q
+  · rfl
+  · rcases any_imp (hm q) hmq with h1 | h1
+    · have := hi.clean q hq; simp only [mentions] at this; rw [this] at h1; simp at h1
+    · obtain ⟨b, hb⟩ := world_bound h1; rw [hq] at hb; simp at hb
 
 theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (p : PortId)
     (j : Json) : Inv h cfg (step h cfg s (.message p j)).1 := by
@@ -318,47 +384,14 @@ theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
       split
       · rename_i cx hcx
         have hlive := ctxOf_live hi.ports hcx
-        have hport := ctxOf_port hcx
-        -- only one component changes, and shell state is untouched
-        have key : ∀ s' : RtState, s'.shell = s.shell → s'.ports = s.ports →
-            (∀ q, mentions s' q = true → mentions s q = true ∨ (world s).bound q) → Inv h cfg s' := by
-          intro s' hsh hpo hm
-          refine ⟨hsh ▸ hi.shell, hsh ▸ hpo ▸ hi.ports, ?_⟩
-          intro q hq
-          rw [hsh] at hq
-          cases hmq : mentions s' q
-          · rfl
-          · rcases hm q hmq with h1 | h1
-            · rw [hi.clean q hq] at h1; exact absurd h1 (by simp)
-            · obtain ⟨b, hb⟩ := world_bound h1; rw [hq] at hb; simp at hb
-        apply key
-        · cases d <;> simp only [napStep, lift] <;> split <;> rfl
-        · cases d <;> simp only [napStep, lift] <;> split <;> rfl
-        · intro q hq
-          cases d <;> simp only [napStep, lift] at hq
-          all_goals first
-            | exact .inl hq
-            | (split at hq
-               · exact mentions_cases hq
-                  (fun h1 => Run.Shell.handle_mentions _ _ _ _ _ _ hlive h1)
-                  (fun h1 => .inl h1) (fun h1 => .inl h1) (fun h1 => .inl h1)
-               · exact .inl hq
-               · exact .inl hq)
-            | (split at hq
-               · exact mentions_cases hq (fun h1 => .inl h1)
-                  (fun h1 => by simp [Run.Theme.mentions] at h1) (fun h1 => .inl h1) (fun h1 => .inl h1)
-               · exact .inl hq
-               · exact .inl hq)
-            | (split at hq
-               · exact mentions_cases hq (fun h1 => .inl h1) (fun h1 => .inl h1)
-                  (fun h1 => Run.Identity.handle_mentions _ _ _ _ _ _ hlive h1) (fun h1 => .inl h1)
-               · exact .inl hq
-               · exact .inl hq)
-            | (split at hq
-               · exact mentions_cases hq (fun h1 => .inl h1) (fun h1 => .inl h1) (fun h1 => .inl h1)
-                  (fun h1 => by simp [Run.Storage.mentions] at h1)
-               · exact .inl hq
-               · exact .inl hq)
+        cases d <;> simp only [napStep, lift] <;> (try exact hi) <;> split <;> (try exact hi)
+        all_goals first
+          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => Run.Shell.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => Run.Theme.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Identity.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Storage.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Inc.handle_mentions _ _ _ _ _ _ hlive h1, fun h1 => .inl h1, trivial⟩)
+          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.handle_mentions _ _ _ _ _ _ hlive h1, trivial⟩)
       · exact hi
     · exact hi
 
@@ -368,17 +401,29 @@ theorem dropAll_shell (s : RtState) (p : PortId) :
     (dropAll s p).1.shell = s.shell ∧ (dropAll s p).1.ports = s.ports ∧
     (dropAll s p).1.inst = s.inst := ⟨rfl, rfl, rfl⟩
 
+theorem any_imp_and {q p : PortId} : ∀ {l l' : List Bool},
+    Pw (fun a b => a = true → b = true ∧ q ≠ p) l' l → l'.any id = true →
+    l.any id = true ∧ q ≠ p
+  | [], [], _, h => by simp at h
+  | [], _ :: _, hf, _ => hf.elim
+  | _ :: _, [], hf, _ => hf.elim
+  | b :: l, a :: l', hf, h => by
+    rcases hf with ⟨h1, h2⟩
+    simp only [List.any_cons, id, Bool.or_eq_true] at h ⊢
+    rcases h with h | h
+    · exact ⟨.inl (h1 h).1, (h1 h).2⟩
+    · exact ⟨.inr (any_imp_and h2 h).1, (any_imp_and h2 h).2⟩
+
 theorem dropAll_mentions (s : RtState) (p q : PortId) (h : mentions (dropAll s p).1 q = true) :
     mentions s q = true ∧ q ≠ p := by
-  have a := Run.Shell.drop_mentions s.shellNap p q
-  have b := Run.Identity.drop_mentions s.identity p q
-  have c := Run.Shell.drop_clears s.shellNap p
-  have d := Run.Identity.drop_clears s.identity p
-  simp only [dropAll, mentions, Run.Theme.mentions, Run.Storage.mentions, Bool.or_false,
-    Bool.false_or, Bool.or_eq_true] at h a b c d ⊢
-  rcases h with h | h
-  · exact ⟨.inl (a h), by rintro rfl; rw [c] at h; simp at h⟩
-  · exact ⟨.inr (b h), by rintro rfl; rw [d] at h; simp at h⟩
+  apply any_imp_and _ h
+  simp only [mentionsList, dropAll, Pw]
+  exact ⟨fun h1 => ⟨Run.Shell.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Shell.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Theme.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Theme.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Identity.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Identity.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Storage.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Storage.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Inc.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Inc.drop_clears] at h1; simp at h1⟩,
+    fun h1 => ⟨Run.Intent.drop_mentions _ _ _ h1, by rintro rfl; rw [Run.Intent.drop_clears] at h1; simp at h1⟩, trivial⟩
 
 theorem dropPorts_shell (s : RtState) (ps : List PortId) :
     (dropPorts s ps).1.shell = s.shell ∧ (dropPorts s ps).1.ports = s.ports := by
@@ -417,11 +462,19 @@ theorem mem_boundPorts {os : List Napplet.Output} {w : WindowId} {p : PortId} {i
     · simp [boundPorts]
     · have := ih h'; cases o <;> simp [boundPorts, this]
 
+theorem Inv.flush {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) :
+    Inv h cfg (flushStep h s).1 := by
+  simp only [flushStep]
+  apply Inv.of_mentions hi; rfl; rfl
+  intro q; simp only [mentionsList, Pw]
+  exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.flush_mentions _ _ _ _ h1, trivial⟩
+
 theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : Event) :
     Inv h cfg (browserStep h cfg s e).1 := by
   simp only [browserStep]
   generalize hst : Napplet.step h.crypto cfg.shell s.shell e = r
   obtain ⟨sh, outs⟩ := r
+  apply Inv.flush
   obtain ⟨hs1, hs2⟩ := dropPorts_shell { s with shell := sh, ports := boundPorts outs ++ s.ports } (closedPorts outs)
   have hsh : sh = (Napplet.step h.crypto cfg.shell s.shell e).1 := by rw [hst]
   have hout : outs = (Napplet.step h.crypto cfg.shell s.shell e).2 := by rw [hst]
@@ -449,38 +502,28 @@ theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
 theorem Inv.reply {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (tag : CallTag)
     (r : Reply) : Inv h cfg (replyStep h s tag r).1 := by
   simp only [replyStep]
-  split
-  · refine ⟨hi.shell, hi.ports, ?_⟩
-    intro q hq
-    cases hm : mentions { s with identity := (Run.Identity.onReply h (world s) s.identity tag.n r).1 } q
-    · rfl
-    · rcases mentions_cases (s := s) hm (fun h1 => .inl h1) (fun h1 => .inl h1)
-        (fun h1 => Run.Identity.onReply_mentions _ _ _ _ _ _ h1) (fun h1 => .inl h1) with h1 | h1
-      · rw [hi.clean q hq] at h1; simp at h1
-      · obtain ⟨b, hb⟩ := world_bound h1; simp_all
-  · exact hi
+  split <;> (try exact hi)
+  all_goals first
+    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => Run.Shell.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => Run.Theme.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Identity.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Storage.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, fun h1 => .inl h1, trivial⟩)
+    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Inc.onReply_mentions _ _ _ _ _ _ h1, fun h1 => .inl h1, trivial⟩)
+    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact ⟨fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => .inl h1, fun h1 => Run.Intent.onReply_mentions _ _ _ _ _ _ h1, trivial⟩)
 
 theorem Inv.event {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : HostEvent) :
     Inv h cfg (eventStep h s e).1 := by
-  refine ⟨hi.shell, hi.ports, ?_⟩
-  intro q hq
-  have hq' : s.shell.bindings q = none := hq
-  cases hm : mentions (eventStep h s e).1 q
-  · rfl
-  · simp only [eventStep] at hm
-    rcases mentions_cases (s := s) hm
-        (fun h1 => .inl h1) (fun h1 => by simp [Run.Theme.mentions] at h1)
-        (fun h1 => Run.Identity.onEvent_mentions _ _ _ _ _ h1) (fun h1 => .inl h1) with h1 | h1
-    · rw [hi.clean q hq'] at h1; simp at h1
-    · obtain ⟨b, hb⟩ := world_bound h1; rw [hq'] at hb; simp at hb
+  apply Inv.of_mentions hi; rfl; rfl
+  intro q
+  simp only [mentionsList, eventStep, Pw]
+  exact ⟨fun h1 => Run.Shell.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Theme.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Identity.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Storage.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Inc.onEvent_mentions _ _ _ _ _ h1, fun h1 => Run.Intent.onEvent_mentions _ _ _ _ _ h1, trivial⟩
 
 theorem Inv.init (h : Host) (cfg : Config) : Inv h cfg (.init cfg) where
   shell := Napplet.Inv.init _ _
   ports := by simp [RtState.init, ShellState.init]
   clean := by
     intro p _
-    simp [mentions, RtState.init, Run.Shell.St.init, Run.Shell.mentions, Run.Theme.mentions,
-      Run.Identity.St.init, Run.Identity.mentions, Run.Storage.mentions]
+    simp [mentions, mentionsList, RtState.init, Run.Shell.St.init, Run.Shell.mentions, Run.Theme.St.init, Run.Theme.mentions, Run.Identity.St.init, Run.Identity.mentions, Run.Storage.St.init, Run.Storage.mentions, Run.Inc.St.init, Run.Inc.mentions, Run.Intent.St.init, Run.Intent.mentions]
 
 theorem Inv.step {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (i : Input) :
     Inv h cfg (step h cfg s i).1 := by
@@ -519,6 +562,9 @@ theorem shell_inv {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg 
     Napplet.Inv h.crypto cfg.shell s.shell :=
   hr.inv.shell
 
+theorem flushStep_shell (h : Host) (s : RtState) : (flushStep h s).1.shell = s.shell := by
+  simp only [flushStep]
+
 /-- A port closing tears the endpoint down everywhere: the binding and grants are
 gone, the frame is removed, `closePort` is emitted, and no component keeps state
 for the port. -/
@@ -533,6 +579,7 @@ theorem port_closed_teardown {h : Host} {cfg : Config} {s : RtState} (hr : Reach
   have hsh : (step h cfg s (.portClosed p)).1.shell =
       (Napplet.step h.crypto cfg.shell s.shell (.portClosed p)).1 := by
     simp only [step, browserStep]
+    rw [flushStep_shell]
     exact (dropPorts_shell _ _).1
   have hout : Output.closePort p ∈ (step h cfg s (.portClosed p)).2 := by
     simp [step, browserStep, Napplet.step, hb, revoke, hf, ofShell]
