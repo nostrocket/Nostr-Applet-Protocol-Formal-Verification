@@ -82,10 +82,11 @@ correlation, teardown, buffering, scopes, identity derivation, the JSON Schema c
 subset for NAP-CONFIG, NIP-19 `naddr` decoding, base64, `data:` URLs, NIP-13
 difficulty) is defined by the Lean definitions.
 
-The host-side pieces are not open questions. Each is a contract in
-`Napplet/Host.lean`, and fulfilling it takes only items 1 and 2:
+The host interface is part of the model, not an input to it: `Napplet/Host.lean`
+states each host function, call, effect and event with its contract. Meeting those
+contracts takes only items 1 and 2, as follows:
 
-| Host piece | Fulfilled by |
+| Host contract (in the model) | Met with |
 |---|---|
 | Signer (`Call.sign`) | NIP-01 event id and BIP-340 signature with the user's key (local, NIP-07 or NIP-46). |
 | Encryption (`Call.encrypt`, `Call.decrypt`, `Host.encryptedWith`, `Host.looksCiphertext`) | NIP-04, NIP-44; which incoming events are encrypted per NIP-17/NIP-59. |
@@ -131,6 +132,9 @@ either. The model's behaviour for each is fixed:
 | Reference runtime (where the text is silent) | `kehto/web` `main` | `3181ac164eee4a4fc96020c053e8df16d1938298` |
 
 All PRs were still open on 2026-11-21; none had merged since the digest was written.
+`scripts/verify_upstream.sh DIR` fetches every text above at its recorded commit and
+reruns the coverage checks (wire types, the 91 request examples, the response
+examples) and the end-to-end vectors against exactly those texts.
 
 ## What is proved
 
