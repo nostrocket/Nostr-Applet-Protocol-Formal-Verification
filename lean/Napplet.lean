@@ -8,3 +8,6 @@ import Napplet.Nap.Intent
 import Napplet.Nap.Inc
 import Napplet.Nap.Theme
 import Napplet.Nap.Identity
+import Napplet.Nap.Storage
+import Napplet.Nap.Resource
+import Napplet.Nap.Relay
