@@ -187,12 +187,15 @@ def replyStep (h : Host) (s : RtState) (tag : CallTag) (r : Reply) : RtState × 
     ({ s with identity := st }, effs.map ofEff)
   | _ => (s, [])
 
+def newUser (s : RtState) : HostEvent → String
+  | .userChanged pk => pk
+  | _ => s.user
+
 def eventStep (h : Host) (s : RtState) (e : HostEvent) : RtState × List Output :=
   let w := world s
   let (th, e1) := Run.Theme.onEvent h w s.theme e
   let (idn, e2) := Run.Identity.onEvent h w s.identity e
-  let user := match e with | .userChanged pk => pk | _ => s.user
-  ({ s with theme := th, identity := idn, user }, (e1 ++ e2).map ofEff)
+  ({ s with theme := th, identity := idn, user := newUser s e }, (e1 ++ e2).map ofEff)
 
 /-- The composed transition function. -/
 def step (h : Host) (cfg : Config) (s : RtState) : Input → RtState × List Output
@@ -358,5 +361,185 @@ theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
                · exact .inl hq)
       · exact hi
     · exact hi
+
+/-! ### Teardown lemmas -/
+
+theorem dropAll_shell (s : RtState) (p : PortId) :
+    (dropAll s p).1.shell = s.shell ∧ (dropAll s p).1.ports = s.ports ∧
+    (dropAll s p).1.inst = s.inst := ⟨rfl, rfl, rfl⟩
+
+theorem dropAll_mentions (s : RtState) (p q : PortId) (h : mentions (dropAll s p).1 q = true) :
+    mentions s q = true ∧ q ≠ p := by
+  have a := Run.Shell.drop_mentions s.shellNap p q
+  have b := Run.Identity.drop_mentions s.identity p q
+  have c := Run.Shell.drop_clears s.shellNap p
+  have d := Run.Identity.drop_clears s.identity p
+  simp only [dropAll, mentions, Run.Theme.mentions, Run.Storage.mentions, Bool.or_false,
+    Bool.false_or, Bool.or_eq_true] at h a b c d ⊢
+  rcases h with h | h
+  · exact ⟨.inl (a h), by rintro rfl; rw [c] at h; simp at h⟩
+  · exact ⟨.inr (b h), by rintro rfl; rw [d] at h; simp at h⟩
+
+theorem dropPorts_shell (s : RtState) (ps : List PortId) :
+    (dropPorts s ps).1.shell = s.shell ∧ (dropPorts s ps).1.ports = s.ports := by
+  induction ps generalizing s with
+  | nil => exact ⟨rfl, rfl⟩
+  | cons p ps ih =>
+    simp only [dropPorts]
+    obtain ⟨h1, h2⟩ := ih (dropAll s p).1
+    exact ⟨h1.trans rfl, h2.trans rfl⟩
+
+theorem dropPorts_mentions (s : RtState) (ps : List PortId) (q : PortId)
+    (h : mentions (dropPorts s ps).1 q = true) : mentions s q = true ∧ q ∉ ps := by
+  induction ps generalizing s with
+  | nil => exact ⟨h, by simp⟩
+  | cons p ps ih =>
+    simp only [dropPorts] at h
+    obtain ⟨h1, h2⟩ := ih _ h
+    obtain ⟨h3, h4⟩ := dropAll_mentions _ _ _ h1
+    exact ⟨h3, by simp [h4, h2]⟩
+
+theorem mem_closedPorts {os : List Napplet.Output} {p : PortId} (h : Napplet.Output.closePort p ∈ os) :
+    p ∈ closedPorts os := by
+  induction os with
+  | nil => simp at h
+  | cons o os ih =>
+    rcases List.mem_cons.mp h with rfl | h'
+    · simp [closedPorts]
+    · have := ih h'; cases o <;> simp [closedPorts, this]
+
+theorem mem_boundPorts {os : List Napplet.Output} {w : WindowId} {p : PortId} {id : Identity}
+    (h : Napplet.Output.bound w p id ∈ os) : p ∈ boundPorts os := by
+  induction os with
+  | nil => simp at h
+  | cons o os ih =>
+    rcases List.mem_cons.mp h with rfl | h'
+    · simp [boundPorts]
+    · have := ih h'; cases o <;> simp [boundPorts, this]
+
+theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : Event) :
+    Inv h cfg (browserStep h cfg s e).1 := by
+  simp only [browserStep]
+  generalize hst : Napplet.step h.crypto cfg.shell s.shell e = r
+  obtain ⟨sh, outs⟩ := r
+  obtain ⟨hs1, hs2⟩ := dropPorts_shell { s with shell := sh, ports := boundPorts outs ++ s.ports } (closedPorts outs)
+  have hsh : sh = (Napplet.step h.crypto cfg.shell s.shell e).1 := by rw [hst]
+  have hout : outs = (Napplet.step h.crypto cfg.shell s.shell e).2 := by rw [hst]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [hs1, hsh]; exact hi.shell.step e
+  · intro p b hb
+    rw [hs1] at hb; rw [hs2]
+    simp only at hb ⊢
+    rw [hsh] at hb
+    rcases Napplet.step_bind e hb with hb | ⟨w, id, hm⟩
+    · exact List.mem_append_right _ (hi.ports p b hb)
+    · exact List.mem_append_left _ (mem_boundPorts (hout ▸ hm))
+  · intro q hq
+    rw [hs1] at hq
+    simp only at hq
+    cases hm : mentions (dropPorts { s with shell := sh, ports := boundPorts outs ++ s.ports } (closedPorts outs)).1 q
+    · rfl
+    · obtain ⟨h1, h2⟩ := dropPorts_mentions _ _ _ hm
+      rw [hsh] at hq
+      rcases Napplet.step_unbind e hq with hq | hc
+      · have : mentions s q = true := h1
+        rw [hi.clean q hq] at this; exact absurd this (by simp)
+      · exact absurd (mem_closedPorts (hout ▸ hc)) h2
+
+theorem Inv.reply {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (tag : CallTag)
+    (r : Reply) : Inv h cfg (replyStep h s tag r).1 := by
+  simp only [replyStep]
+  split
+  · refine ⟨hi.shell, hi.ports, ?_⟩
+    intro q hq
+    cases hm : mentions { s with identity := (Run.Identity.onReply h (world s) s.identity tag.n r).1 } q
+    · rfl
+    · rcases mentions_cases (s := s) hm (fun h1 => .inl h1) (fun h1 => .inl h1)
+        (fun h1 => Run.Identity.onReply_mentions _ _ _ _ _ _ h1) (fun h1 => .inl h1) with h1 | h1
+      · rw [hi.clean q hq] at h1; simp at h1
+      · obtain ⟨b, hb⟩ := world_bound h1; simp_all
+  · exact hi
+
+theorem Inv.event {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : HostEvent) :
+    Inv h cfg (eventStep h s e).1 := by
+  refine ⟨hi.shell, hi.ports, ?_⟩
+  intro q hq
+  have hq' : s.shell.bindings q = none := hq
+  cases hm : mentions (eventStep h s e).1 q
+  · rfl
+  · simp only [eventStep] at hm
+    rcases mentions_cases (s := s) hm
+        (fun h1 => .inl h1) (fun h1 => by simp [Run.Theme.mentions] at h1)
+        (fun h1 => Run.Identity.onEvent_mentions _ _ _ _ _ h1) (fun h1 => .inl h1) with h1 | h1
+    · rw [hi.clean q hq'] at h1; simp at h1
+    · obtain ⟨b, hb⟩ := world_bound h1; rw [hq'] at hb; simp at hb
+
+theorem Inv.init (h : Host) (cfg : Config) : Inv h cfg (.init cfg) where
+  shell := Napplet.Inv.init _ _
+  ports := by simp [RtState.init, ShellState.init]
+  clean := by
+    intro p _
+    simp [mentions, RtState.init, Run.Shell.St.init, Run.Shell.mentions, Run.Theme.mentions,
+      Run.Identity.St.init, Run.Identity.mentions, Run.Storage.mentions]
+
+theorem Inv.step {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (i : Input) :
+    Inv h cfg (step h cfg s i).1 := by
+  cases i with
+  | create w m bytes inst =>
+    apply Inv.browser
+    split
+    · exact ⟨hi.shell, hi.ports, hi.clean⟩
+    · exact hi
+  | load w => exact hi.browser _
+  | hello w ports => exact hi.browser _
+  | windowMsg w => exact hi.browser _
+  | portClosed p => exact hi.browser _
+  | grant p g => exact hi.browser _
+  | message p j => exact hi.message p j
+  | reply tag r => exact hi.reply tag r
+  | event e => exact hi.event e
+  | tick now => exact ⟨hi.shell, hi.ports, hi.clean⟩
+
+theorem Reachable.inv {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s) :
+    Inv h cfg s := by
+  induction hr with
+  | init => exact Inv.init h cfg
+  | step i _ ih => exact ih.step i
+
+/-! ### Headline properties over the composed machine -/
+
+/-- Teardown clears every NAP's per-endpoint state: in every reachable state no
+component holds anything for a port that is not bound. -/
+theorem teardown_clears {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s)
+    {p : PortId} (hb : s.shell.bindings p = none) : mentions s p = false :=
+  hr.inv.clean p hb
+
+/-- The NIP-5D shell invariant holds in every reachable composed state. -/
+theorem shell_inv {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s) :
+    Napplet.Inv h.crypto cfg.shell s.shell :=
+  hr.inv.shell
+
+/-- A port closing tears the endpoint down everywhere: the binding and grants are
+gone, the frame is removed, `closePort` is emitted, and no component keeps state
+for the port. -/
+theorem port_closed_teardown {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s)
+    {p : PortId} {b : Binding} (hb : s.shell.bindings p = some b) :
+    let r := step h cfg s (.portClosed p)
+    r.1.shell.bindings p = none ∧ r.1.shell.grants p = [] ∧
+    r.1.shell.frames b.window = some .removed ∧ Output.closePort p ∈ r.2 ∧
+    mentions r.1 p = false := by
+  have hr' := Reachable.step (.portClosed p) hr
+  obtain ⟨ld, hf⟩ := (shell_inv hr).bind_frame p b hb
+  have hsh : (step h cfg s (.portClosed p)).1.shell =
+      (Napplet.step h.crypto cfg.shell s.shell (.portClosed p)).1 := by
+    simp only [step, browserStep]
+    exact (dropPorts_shell _ _).1
+  have hout : Output.closePort p ∈ (step h cfg s (.portClosed p)).2 := by
+    simp [step, browserStep, Napplet.step, hb, revoke, hf, ofShell]
+  have hn : (step h cfg s (.portClosed p)).1.shell.bindings p = none := by
+    rw [hsh]; simp [Napplet.step, hb, revoke, hf]
+  refine ⟨hn, ?_, ?_, hout, teardown_clears hr' hn⟩
+  · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
+  · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
 
 end Napplet.Runtime
