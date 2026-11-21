@@ -31,7 +31,6 @@ examples of what is proved:
 - No resource fetch reaches a private address.
 - Money moves only with consent or a covering allowance.
 - A retired media session never comes back.
-
 - Teardown clears every NAP's per-endpoint state.
 
 Several properties hold over every reachable state of the composed runtime.

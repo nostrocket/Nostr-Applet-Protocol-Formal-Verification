@@ -35,7 +35,7 @@ A shell implementation is a faithful port of four things.
 | Host interface | [`Napplet/Host.lean`](Napplet/Host.lean) | Everything the host supplies, each with its contract: pure functions (`Host`: SHA-256, signature checks, MIME sniffing, SVG rasterisation, ciphertext detection), asynchronous calls and replies (signing, encryption, decryption, fetch, prompts, relay pool, NIP-65, NAP-specific operations), effects, events, the clock, persistence, and the list of external standards. |
 | Shell configuration | `Runtime.Config` and each component's `Cfg` | Policy that is not a host call (exposure policy, quotas, rails, allowlists, limits). Defaults follow the upstream recommendations. |
 | Per-NAP behaviour | `Napplet/Run/<Name>.lean` | One component per NAP: `decode` (wire JSON → typed request, with upstream type strings, fields, errors), `encodeReq` (proved inverse of `decode`), `handle`, `onReply`, `onEvent`, `drop` (teardown), and the encoders for every result and push. Each file starts with its upstream wire summary and ends with vectors built from the upstream examples. |
-| Napplet side | [`Napplet/Binding.lean`](Napplet/Binding.lean), [`Napplet/BindingUri.lean`](Napplet/BindingUri.lean), [`Napplet/Nip19.lean`](Napplet/Nip19.lean) | Bootstrap (`napplet.hello` once), request ids and correlation, push buffering, sidecar hydration order, convention URI normalisation and `naddr` handler hints. |
+| Napplet side | [`Napplet/Binding.lean`](Napplet/Binding.lean), [`Napplet/BindingApi.lean`](Napplet/BindingApi.lean), [`Napplet/BindingUri.lean`](Napplet/BindingUri.lean), [`Napplet/Nip19.lean`](Napplet/Nip19.lean) | Bootstrap (`napplet.hello` once), the `window.napplet.<domain>` method surface and its mapping to wire requests, request ids and correlation, push buffering, sidecar hydration order, convention URI normalisation and `naddr` handler hints. |
 
 Identity: `checkManifest` (`Napplet/Manifest.lean`) computes the bound `Identity`
 from the signed manifest event and the artifact bytes: NIP-5D's `(dTag, artifactHash)`
@@ -43,6 +43,30 @@ plus the publisher, kind and event id. Every NAP gets its endpoint context from 
 binding through one function, `Ctx.ofBinding` (`Napplet/Component.lean`), which gives
 the manifest key (`Identity.key`) used by the STORAGE, RESOURCE and CONFIG scopes, the
 INTENT catalog id (`Identity.catalogId`, kehto's encoding) and the INC endpoint id.
+
+### What an implementer still needs from outside the model
+
+Nothing beyond browser behaviour and the standards named in `Napplet/Host.lean`:
+
+1. **Browser behaviour of the web projection** (NIP-5D, HTML standard, CSP Level 3):
+   creating the `srcdoc` iframe with `sandbox="allow-scripts"`, injecting the CSP
+   `meta`, the bootstrap and `window.napplet` before napplet scripts run,
+   `MessageChannel` and transfer-list `postMessage` with target `'*'`, structured
+   clone of messages, telling windows apart by `MessageEvent.source`, `load` events,
+   `MessagePort.close()` and port errors, removing iframes, and opening links
+   without an opener. `Napplet/Host.lean` §Global contracts says which runtime
+   input or output each corresponds to.
+2. **The external standards the host contracts name**, implemented by the host:
+   NIP-01, -04, -07/-46, -13, -17/-59, -19/-21, -44, -47, -51, -57, -58, -65,
+   -92/-94, -96, -98; Blossom BUD-01, -02, -10, -11; HTS-01; LUD-06/-16; ContextVM
+   CEP-4/-6/-8/-15/-17/-35 and MCP 2025-11-25; BIP-340, BIP-173, FIPS 180-4,
+   RFC 8259, RFC 4648, RFC 2397, WHATWG MIME Sniffing.
+
+Everything else (wire formats, validation, error strings, policy decisions,
+correlation, teardown, buffering, scopes, identity derivation, the JSON Schema core
+subset for NAP-CONFIG, NIP-19 `naddr` decoding, base64, `data:` URLs, NIP-13
+difficulty) is defined by the Lean definitions. Shell UI (prompts, the settings
+panel, notifications) is the host's, under the contracts in `Napplet/Host.lean`.
 
 ### Upstream texts used
 

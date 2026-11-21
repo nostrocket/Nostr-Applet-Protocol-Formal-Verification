@@ -49,6 +49,29 @@ and the browser.
   stores them. Everything keyed by port or window is per session.
 * **Tags.** A tag (`CallTag`) is unique among the calls the runtime has outstanding.
   The host echoes it unchanged and never invents one.
+* **Loading a napplet.** Before `Input.create w m bytes inst` the host resolves the
+  manifest event `m` (kind 5129, 15129 or 35129) from relays (NIP-01) and fetches the
+  artifact `bytes` by the `x` hash from Blossom servers (BUD-01 `GET /<sha256>`, using
+  the manifest's `server` hints) or a gateway; the runtime verifies both
+  (`checkManifest`), so the host needs no trust in either source. On
+  `Output.iframeCreated w id exposed` it creates the iframe: `sandbox="allow-scripts"`,
+  `srcdoc` = the verified bytes with the CSP `meta` (NIP-5D §Security baseline) as the
+  first element of `head` and the bootstrap (`Binding`, `BindingApi`) injected before
+  any napplet script, exposing exactly `exposed` as `window.napplet.<domain>`. `inst`
+  is the host's stable identifier for this napplet instance (NAP-STORAGE §Instance
+  Scope).
+* **Browser events.** The host reports the iframe's `load` events, window messages
+  from its `contentWindow` (`hello` when `{type: "napplet.hello"}`, with the
+  transferred ports), every message on a bound port as `Input.message`, and a port
+  closing or erroring as `Input.portClosed`. It applies `closePort` with
+  `MessagePort.close()` and `removeFrame` by removing the iframe, and drops window
+  messages from frames it did not create.
+* **Presentation metadata.** To show a manifest's `icon`, `screenshot` or `preview`
+  (`VerifiedManifest.metadata`), the host fetches the blob by hash from the `server`
+  origins (BUD-01), verifies its SHA-256, decodes it as the declared format (PNG, JPEG
+  or WebP for images; a supported video format for previews) and renders only the
+  verified bytes; anything unusable falls back to generic artwork and never blocks
+  loading (NIP-5D §Icon, §Presentation media).
 * **Standards.** Where a contract names a standard the host implements that
   standard; the model does not restate it. The complete list the host interface
   relies on:
@@ -58,7 +81,7 @@ and the browser.
     (bech32 entities, `nostr:` URIs), NIP-47 (NWC), NIP-51 (lists), NIP-57 (zaps),
     NIP-58 (badges), NIP-65 (relay lists), NIP-92 / NIP-94 (media metadata), NIP-96
     (HTTP file storage), NIP-98 (HTTP auth).
-  - Blossom BUD-02 (upload), BUD-10 (`blossom:` URIs), BUD-11 (auth); Hashtree HTS-01
+  - Blossom BUD-01 (retrieval), BUD-02 (upload), BUD-10 (`blossom:` URIs), BUD-11 (auth); Hashtree HTS-01
     and its URL-ENCODING note; LNURL LUD-06 / LUD-16; ContextVM CEP-4, CEP-6, CEP-8,
     CEP-15, CEP-17, CEP-35 and MCP 2025-11-25.
   - BIP-340 (Schnorr signatures), BIP-173 (bech32), FIPS 180-4 (SHA-256), RFC 8259

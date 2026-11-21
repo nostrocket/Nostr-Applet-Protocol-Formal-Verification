@@ -36,4 +36,5 @@ import Napplet.Runtime
 import Napplet.Binding
 import Napplet.Nip19
 import Napplet.BindingUri
+import Napplet.BindingApi
 import Napplet.Test.E2E
