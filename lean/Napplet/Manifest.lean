@@ -25,12 +25,14 @@ structure Tag where
   values : List String
   deriving DecidableEq, Repr
 
-/-- The parts of a manifest event the runtime inspects. -/
+/-- The parts of a manifest event the runtime inspects. `id` is the NIP-01 event id
+and `pubkey` the publisher; the host checks both with the signature (`Crypto.verifySig`). -/
 structure ManifestEvent where
   kind : Nat
   pubkey : Pubkey
   content : String
   tags : List Tag
+  id : String := ""
   deriving Repr
 
 namespace ManifestEvent
@@ -60,6 +62,151 @@ inductive ManifestError where
   | missingRequired (name : String)
   deriving DecidableEq, Repr
 
+/-! ### Descriptive metadata (NIP-5D §Manifest, §Source, §Presentation media, §Icon)
+
+None of this affects verification or identity. Malformed, repeated or unusable
+entries are dropped, never fatal: "Missing or unusable source metadata MUST NOT
+prevent playback", unusable screenshots "MUST NOT suppress other usable
+screenshots", and a bad icon "MUST fall back to generic artwork". The host still
+fetches and hash-checks any blob before rendering it (`Host.fetchBlob`). -/
+
+def isLowerHex (n : Nat) (s : String) : Bool :=
+  s.length == n && s.all fun c => ('0' ≤ c && c ≤ '9') || ('a' ≤ c && c ≤ 'f')
+
+/-- `["icon", <sha256>, <mime>]`: PNG, JPEG or WebP only. -/
+structure Icon where
+  sha256 : Hash
+  mime : String
+  deriving DecidableEq, Repr
+
+def iconMimes : List String := ["image/png", "image/jpeg", "image/webp"]
+
+/-- A `screenshot` or `preview` blob (NIP-92 `key value` fields). -/
+structure MediaBlob where
+  sha256 : Hash
+  mime : Option String := none
+  dim : Option String := none
+  size : Option Nat := none
+  alt : Option String := none
+  duration : Option String := none
+  deriving DecidableEq, Repr
+
+/-- `["source-archive", <https-url>, <sha256>, <mime>]`. -/
+structure SourceArchive where
+  url : String
+  sha256 : Hash
+  mime : String
+  deriving DecidableEq, Repr
+
+structure Metadata where
+  title : Option String := none
+  icon : Option Icon := none
+  screenshots : List MediaBlob := []
+  preview : Option MediaBlob := none
+  servers : List String := []
+  source : Option String := none
+  sourceCommit : Option String := none
+  sourceArchive : Option SourceArchive := none
+  /-- `a` (immediate antecedent) and `A` (root) on snapshots. Provenance only. -/
+  parent : Option String := none
+  rootAddr : Option String := none
+  deriving DecidableEq, Repr
+
+/-- Split a NIP-92 field at the first ASCII space. -/
+def splitField (f : String) : String × String :=
+  let cs := f.toList
+  (String.ofList (cs.takeWhile (· != ' ')), String.ofList ((cs.dropWhile (· != ' ')).drop 1))
+
+def decimalNat? (s : String) : Option Nat :=
+  if !s.isEmpty && s.all Char.isDigit then some (s.foldl (fun n c => n * 10 + (c.toNat - 48)) 0)
+  else none
+
+/-- `dim` is `<width>x<height>` with positive decimal integers. -/
+def dimOk (s : String) : Bool :=
+  match s.splitOn "x" with
+  | [w, h] => (decimalNat? w).any (· > 0) && (decimalNat? h).any (· > 0)
+  | _ => false
+
+/-- `duration` is non-negative decimal seconds (`8.5`). -/
+def durationOk (s : String) : Bool :=
+  match s.splitOn "." with
+  | [a] => (decimalNat? a).isSome
+  | [a, b] => (decimalNat? a).isSome && (decimalNat? b).isSome
+  | _ => false
+
+/-- The single value of field `k`, if present exactly once and valid. Absent,
+malformed or repeated optional fields are ignored. -/
+def oneField (fs : List (String × String)) (k : String) (ok : String → Bool) : Option String :=
+  match fs.filter (·.1 == k) with
+  | [(_, v)] => if ok v then some v else none
+  | _ => none
+
+def parseMediaBlob (allowDuration : Bool) (values : List String) : Option MediaBlob :=
+  let fs := values.map splitField
+  match fs.filter (·.1 == "x") with
+  | [(_, x)] =>
+    if isLowerHex 64 x then
+      some { sha256 := x
+             mime := oneField fs "m" (fun v => !v.isEmpty)
+             dim := oneField fs "dim" dimOk
+             size := (oneField fs "size" (fun v => (decimalNat? v).isSome)).bind decimalNat?
+             alt := oneField fs "alt" (fun _ => true)
+             duration := if allowDuration then oneField fs "duration" durationOk else none }
+    else none
+  | _ => none
+
+/-- Absolute URL with one of the given schemes and a non-empty rest. -/
+def urlWithScheme (schemes : List String) (u : String) : Bool :=
+  match u.splitOn ":" with
+  | sch :: rest => schemes.contains sch && !(":".intercalate rest).isEmpty
+  | [] => false
+
+/-- Git scp-like SSH location `[user@]host:path` (no scheme, no `//`). -/
+def scpLike (u : String) : Bool :=
+  match u.splitOn ":" with
+  | [hostPart, path] =>
+    !hostPart.isEmpty && !path.isEmpty && !path.startsWith "//" && !hostPart.contains '/'
+  | _ => false
+
+def sourceOk (u : String) : Bool :=
+  urlWithScheme ["http", "https", "ssh", "git", "nostr"] u || scpLike u
+
+/-- `https:` URL without credentials or fragment. -/
+def archiveUrlOk (u : String) : Bool :=
+  u.startsWith "https://" && !u.contains '#' &&
+    !((u.drop 8).toString.takeWhile (· != '/')).toString.contains '@'
+
+/-- Value of a tag that must appear at most once with exactly `n` values. -/
+def uniqueTag (m : ManifestEvent) (name : String) (n : Nat) : Option (List String) :=
+  match m.tagsNamed name with
+  | [t] => if t.values.length = n then some t.values else none
+  | _ => none
+
+def parseMetadata (k : ManifestKind) (m : ManifestEvent) : Metadata :=
+  let source := (uniqueTag m "source" 1).bind fun vs => vs.head?.filter sourceOk
+  { title := (uniqueTag m "title" 1).bind (·.head?)
+    icon := (uniqueTag m "icon" 2).bind fun vs =>
+      match vs with
+      | [h, mime] => if isLowerHex 64 h && iconMimes.contains mime then some ⟨h, mime⟩ else none
+      | _ => none
+    screenshots := (m.tagsNamed "screenshot").filterMap (parseMediaBlob false ·.values)
+    preview := match m.tagsNamed "preview" with
+      | [t] => parseMediaBlob true t.values
+      | _ => none
+    servers := m.firstValues "server"
+    source
+    sourceCommit := if source.isSome then
+        (uniqueTag m "source-commit" 1).bind fun vs =>
+          vs.head?.filter fun c => isLowerHex 40 c || isLowerHex 64 c
+      else none
+    sourceArchive := (uniqueTag m "source-archive" 3).bind fun vs =>
+      match vs with
+      | [u, h, mime] =>
+        if archiveUrlOk u && isLowerHex 64 h && !mime.isEmpty then some ⟨u, h, mime⟩ else none
+      | _ => none
+    parent := if k = .snapshot then (uniqueTag m "a" 1).bind (·.head?) else none
+    rootAddr := if k = .snapshot then (uniqueTag m "A" 1).bind (·.head?) else none }
+
 /-- A manifest that passed `checkManifest` against specific bytes. -/
 structure VerifiedManifest where
   kind : ManifestKind
@@ -69,6 +216,9 @@ structure VerifiedManifest where
   archetypes : List String
   /-- Each `i` tag: intent identity followed by advertised parameter names. -/
   intents : List (List String)
+  /-- Plain-text description (event `content`). -/
+  content : String := ""
+  metadata : Metadata := {}
   deriving Repr
 
 /-- The value of the single `x` tag, if there is exactly one with one value. -/
@@ -80,7 +230,7 @@ def xValue? (m : ManifestEvent) : Option Hash :=
 /-- `d` is exactly one on 35129 and absent otherwise. -/
 def dValue? (k : ManifestKind) (m : ManifestEvent) : Except ManifestError (Option String) :=
   match k, m.tagsNamed "d" with
-  | .named, [⟨_, [v]⟩] => .ok (some v)
+  | .named, [⟨_, [v]⟩] => if v = "" then .error .dTagCount else .ok (some v)
   | .named, _ => .error .dTagCount
   | .snapshot, [] => .ok none
   | .root, [] => .ok none
@@ -108,7 +258,10 @@ def checkManifest (c : Crypto) (m : ManifestEvent) (bytes : Bytes) :
         else if c.sha256 bytes ≠ x then .error .hashMismatch
         else .ok {
           kind := k
-          identity := { dTag := d, artifactHash := c.sha256 bytes }
+          identity := { dTag := d, artifactHash := c.sha256 bytes, publisher := m.pubkey,
+                        kind := k, eventId := m.id }
+          content := m.content
+          metadata := parseMetadata k m
           required := m.firstValues "R"
           optional := m.firstValues "O"
           archetypes := m.firstValues "z"
@@ -128,7 +281,8 @@ theorem checkManifest_ok {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
     v.identity.artifactHash = c.sha256 bytes ∧
     m.content.isEmpty = false ∧
     lineageOk v.kind m = true ∧
-    dValue? v.kind m = .ok v.identity.dTag := by
+    dValue? v.kind m = .ok v.identity.dTag ∧
+    v.identity.publisher = m.pubkey ∧ v.identity.eventId = m.id ∧ v.identity.kind = v.kind := by
   unfold checkManifest at h
   split at h
   · simp at h
@@ -161,6 +315,14 @@ theorem checkManifest_identity {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
     v.identity.artifactHash = c.sha256 bytes :=
   (checkManifest_ok h).2.2.2.1
 
+/-- The publisher, event id and kind in the bound identity are the signed event's
+own fields (the manifest key is derived from them by `Identity.key`). -/
+theorem checkManifest_principal {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
+    {v : VerifiedManifest} (h : checkManifest c m bytes = .ok v) :
+    c.verifySig m = true ∧ v.identity.publisher = m.pubkey ∧ v.identity.eventId = m.id ∧
+    v.identity.kind = v.kind :=
+  ⟨(checkManifest_ok h).1, (checkManifest_ok h).2.2.2.2.2.2.2⟩
+
 /-- A manifest without exactly one `x` tag is rejected. -/
 theorem checkManifest_single_x {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
     {v : VerifiedManifest} (h : checkManifest c m bytes = .ok v) :
@@ -179,7 +341,11 @@ theorem checkManifest_rejects_mismatch {c : Crypto} {m : ManifestEvent} {bytes :
 theorem dValue?_named {m : ManifestEvent} {d : Option String}
     (h : dValue? .named m = .ok d) : d.isSome := by
   unfold dValue? at h
-  split at h <;> cases h <;> simp_all
+  split at h
+  · split at h
+    · simp at h
+    · simp only [Except.ok.injEq] at h; rw [← h]; rfl
+  all_goals simp_all
 
 theorem dValue?_not_named {k : ManifestKind} {m : ManifestEvent} {d : Option String}
     (hk : k ≠ .named) (h : dValue? k m = .ok d) : d = none := by
@@ -190,7 +356,7 @@ theorem dValue?_not_named {k : ManifestKind} {m : ManifestEvent} {d : Option Str
 theorem checkManifest_dTag {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
     {v : VerifiedManifest} (h : checkManifest c m bytes = .ok v) :
     (v.kind = .named ↔ v.identity.dTag.isSome) := by
-  have hd := (checkManifest_ok h).2.2.2.2.2.2
+  have hd := (checkManifest_ok h).2.2.2.2.2.2.1
   constructor
   · intro hk
     rw [hk] at hd

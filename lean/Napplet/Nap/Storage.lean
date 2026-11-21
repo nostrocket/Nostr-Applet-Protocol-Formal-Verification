@@ -24,12 +24,9 @@ Results:
 
 namespace Napplet.NapStorage
 
-/-- Manifest key from the verified manifest (NAP-STORAGE §Identity Scope). -/
-inductive ManifestKey where
-  | named (publisher : Pubkey) (d : String)
-  | root (publisher : Pubkey)
-  | snapshot (eventId : String)
-  deriving DecidableEq, Repr
+/-- Manifest key from the verified manifest (NAP-STORAGE §Identity Scope). The one
+definition is `Napplet.ManifestKey`, derived by `Identity.key`. -/
+abbrev ManifestKey := Napplet.ManifestKey
 
 abbrev InstanceId := Nat
 
@@ -44,6 +41,12 @@ structure EndpointCtx where
   key : ManifestKey
   artifactHash : Hash
   instanceId : InstanceId
+
+/-- The endpoint context for a bound napplet: the manifest key and artifact hash
+come from the verified identity (never from a request); the instance id is the
+host's stable instance identifier (NAP-STORAGE §Instance Scope). -/
+def EndpointCtx.ofIdentity (id : Identity) (inst : InstanceId) : EndpointCtx :=
+  { key := id.key, artifactHash := id.artifactHash, instanceId := inst }
 
 inductive ScopeSel where
   | shared

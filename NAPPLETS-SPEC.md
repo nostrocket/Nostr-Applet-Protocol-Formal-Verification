@@ -214,6 +214,14 @@ Publishing tools SHOULD preserve manifest metadata in the artifact `<head>`:
 Identity is `(dTag, artifactHash)`. A `d` tag alone is not publisher-scoped. The hash covers
 artifact bytes only.
 
+NIP-5D's tuple is not enough for the NAP scopes. NAP-STORAGE, NAP-RESOURCE and NAP-CONFIG scope
+by a **manifest key** (named: publisher, kind, `d`; root: publisher, kind; snapshot: signed event
+id) plus `artifactHash`, and NAP-INTENT catalog identifiers use the same key. Neither spec states
+the reconciliation, but both say the runtime derives these from "the authenticated endpoint's
+verified manifest and artifact". The kehto runtime binds a permission principal
+`(manifestKey, artifactHash)` with `manifestKey` = `nip5d:35129:<pubkey>:<d>`,
+`nip5d:15129:<pubkey>` or `nip5d:5129:<event id>` (`@kehto/nip` `getNappletCatalogId`).
+
 1. The runtime MUST compute identity from the napplet's own bytes and MUST NOT accept it from a host.
 2. Before creating the iframe, the runtime MUST:
    a. resolve the manifest (5129, 15129 or 35129) from relays and verify its signature;

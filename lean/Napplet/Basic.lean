@@ -85,11 +85,54 @@ theorem ofNat?_toNat (k : ManifestKind) : ofNat? k.toNat = some k := by
 
 end ManifestKind
 
-/-- Napplet identity `(dTag, artifactHash)` (NIP-5D §Identity). -/
+/-- Manifest key (NAP-STORAGE, NAP-RESOURCE and NAP-CONFIG §Identity Scope; NAP-INTENT
+§Catalog identifiers): named = (publisher, kind, `d`), root = (publisher, kind),
+snapshot = signed event id. A bare `d` never identifies anything. -/
+inductive ManifestKey where
+  | named (publisher : Pubkey) (d : String)
+  | root (publisher : Pubkey)
+  | snapshot (eventId : String)
+  deriving DecidableEq, Repr
+
+/-- The verified napplet principal the runtime binds to a port.
+
+NIP-5D §Identity defines napplet identity as `(dTag, artifactHash)`; those are the
+first two fields. The NAP identity scopes also need the manifest's publisher, kind
+and signed event id, which NIP-5D's identity tuple does not carry (a bare `d` is
+not publisher-scoped). The runtime computes all five from the verified manifest
+event and artifact bytes (`checkManifest`); none comes from the napplet or a host. -/
 structure Identity where
   dTag : Option String
   artifactHash : Hash
+  /-- Manifest event `pubkey` (the publisher). -/
+  publisher : Pubkey := ""
+  kind : ManifestKind := .named
+  /-- Manifest event `id` (NIP-01 event id). -/
+  eventId : String := ""
   deriving DecidableEq, Repr
+
+namespace Identity
+
+/-- NIP-5D's identity tuple. -/
+def nip5d (i : Identity) : Option String × Hash := (i.dTag, i.artifactHash)
+
+/-- The manifest key, derived in exactly one place. -/
+def key (i : Identity) : ManifestKey :=
+  match i.kind with
+  | .named => .named i.publisher (i.dTag.getD "")
+  | .root => .root i.publisher
+  | .snapshot => .snapshot i.eventId
+
+/-- Runtime catalog identifier (NAP-INTENT §Catalog identifiers), using the
+encoding of the kehto reference runtime (`@kehto/nip` `getNappletCatalogId`):
+`nip5d:35129:<pubkey>:<d>`, `nip5d:15129:<pubkey>`, `nip5d:5129:<event id>`. -/
+def catalogId (i : Identity) : String :=
+  match i.key with
+  | .named p d => "nip5d:35129:" ++ p ++ ":" ++ d
+  | .root p => "nip5d:15129:" ++ p
+  | .snapshot e => "nip5d:5129:" ++ e
+
+end Identity
 
 /-- Point update of a function. Used for all finite-map state in the model. -/
 def upd {α β : Type} [DecidableEq α] (f : α → β) (a : α) (b : β) : α → β :=
