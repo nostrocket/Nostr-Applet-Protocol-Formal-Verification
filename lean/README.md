@@ -65,8 +65,31 @@ Nothing beyond browser behaviour and the standards named in `Napplet/Host.lean`:
 Everything else (wire formats, validation, error strings, policy decisions,
 correlation, teardown, buffering, scopes, identity derivation, the JSON Schema core
 subset for NAP-CONFIG, NIP-19 `naddr` decoding, base64, `data:` URLs, NIP-13
-difficulty) is defined by the Lean definitions. Shell UI (prompts, the settings
-panel, notifications) is the host's, under the contracts in `Napplet/Host.lean`.
+difficulty) is defined by the Lean definitions.
+
+The host-side pieces are not open questions. Each is a contract in
+`Napplet/Host.lean`, and fulfilling it takes only items 1 and 2:
+
+| Host piece | Fulfilled by |
+|---|---|
+| Signer (`Call.sign`) | NIP-01 event id and BIP-340 signature with the user's key (local, NIP-07 or NIP-46). |
+| Encryption (`Call.encrypt`, `Call.decrypt`, `Host.encryptedWith`, `Host.looksCiphertext`) | NIP-04, NIP-44; which incoming events are encrypted per NIP-17/NIP-59. |
+| Relay pool (`Call.subscribe`, `Call.publish`, `Call.relayList`) | NIP-01 relay protocol, NIP-65 relay lists. |
+| Fetch (`Call.fetch`) | HTTPS with DNS (browser `fetch` from the shell's own origin), BUD-10, NIP-19, HTS-01, RFC 2397; hop reporting and limits are stated in the contract. |
+| Storage servers, wallet, miner, ContextVM | NIP-96/NIP-98, BUD-02/BUD-11; NIP-47, NIP-57, LUD-06/16; NIP-13; ContextVM CEPs with MCP 2025-11-25. The JSON each operation exchanges is defined in the model. |
+| Prompts, settings panel, notifications, media player, displays, key input | Shell UI in the browser. The contract fixes what each shows, what reply it gives, and that it never blocks other inputs; how it looks is not protocol. |
+| Persistence | Storing the runtime state across reloads with browser storage. Which fields persist is stated in the contract. |
+| Clock | `Input.tick now` from the browser clock. |
+| Hashing, sniffing, rasterising | FIPS 180-4, WHATWG MIME Sniffing, SVG rendering in an isolated browser context. |
+
+The five items under "Not modelled yet" that upstream leaves undefined need nothing
+either. The model's behaviour for each is fixed:
+- MEDIA out-of-band source binding: there is no such binding. Shell-owned playback
+  uses the `source` given at create.
+- Gift-wrap depth: decided by `Host.encryptedWith` and `Call.decrypt` (NIP-17/59).
+- Resource sidecar carriers: no sidecar resources are ever sent.
+- Upload cancel: no wire message exists, so there is nothing to handle.
+- Paged `relay.query`: not part of the wire.
 
 ### Upstream texts used
 
