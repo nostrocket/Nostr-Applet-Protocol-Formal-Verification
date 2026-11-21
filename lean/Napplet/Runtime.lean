@@ -870,4 +870,35 @@ theorem port_closed_teardown {h : Host} {cfg : Config} {s : RtState} (hr : Reach
   · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
   · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
 
+/-- Every endpoint context a component sees (the only source of the sender's identity)
+came from verified artifact bytes, and its domains are exactly the policy exposure
+(NIP-5D §Identity; lifts `dispatch_sender_verified`). -/
+theorem ctx_verified {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s)
+    {p : PortId} {cx : Ctx} (hc : ctxOf s p = some cx) :
+    Verified h.crypto cx.identity ∧ cx.exposed = exposedFor cfg.shell cx.identity ∧ cx.port = p := by
+  simp only [ctxOf, Option.map_eq_some_iff] at hc
+  obtain ⟨b, hb, rfl⟩ := hc
+  obtain ⟨ld, hf⟩ := (shell_inv hr).bind_frame p b hb
+  exact ⟨((shell_inv hr).frame_verified _ _ _ _ _ hf).1, ((shell_inv hr).frame_verified _ _ _ _ _ hf).2, rfl⟩
+
+/-- A second `napplet.hello` (or any window message after handoff) tears the endpoint
+down in every NAP: close the port, remove the frame, and no component keeps state. -/
+theorem second_hello_teardown {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s)
+    {w : WindowId} {id : Identity} {ex : List Domain} {p : PortId} {ld : Bool}
+    (hf : s.shell.frames w = some (.live id ex (some p) ld)) (ports : List PortId) :
+    let r := step h cfg s (.hello w ports)
+    r.1.shell.bindings p = none ∧ r.1.shell.frames w = some .removed ∧
+    Output.closePort p ∈ r.2 ∧ Output.removeFrame w ∈ r.2 ∧ mentions r.1 p = false := by
+  have hr' := Reachable.step (.hello w ports) hr
+  have hsh : (step h cfg s (.hello w ports)).1.shell =
+      (Napplet.step h.crypto cfg.shell s.shell (.hello w ports)).1 := by
+    simp only [step, browserStep]
+    rw [flushStep_shell]
+    exact (dropPorts_shell _ _).1
+  have hn : (step h cfg s (.hello w ports)).1.shell.bindings p = none := by
+    rw [hsh]; exact (revoke_second_hello hf).2.1
+  refine ⟨hn, by rw [hsh]; exact (revoke_second_hello hf).1, ?_, ?_, teardown_clears hr' hn⟩
+  · simp [step, browserStep, (revoke_second_hello (c := h.crypto) (cfg := cfg.shell) (ports := ports) hf).2.2.2, ofShell]
+  · simp [step, browserStep, (revoke_second_hello (c := h.crypto) (cfg := cfg.shell) (ports := ports) hf).2.2.2, ofShell]
+
 end Napplet.Runtime
