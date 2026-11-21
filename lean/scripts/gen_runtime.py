@@ -10,6 +10,9 @@ COMPS = [
     ("Storage", "storage", "storage", None, "Run.Storage.St.init cfg.storageQuota"),
     ("Inc", "inc", "inc", "incCfg", "Run.Inc.St.init cfg.incCfg"),
     ("Intent", "intent", "intent", "intentCfg", "Run.Intent.St.init cfg.intentCfg"),
+    ("Notify", "notify", "notify", "notifyCfg", "Run.Notify.St.init cfg.notifyCfg"),
+    ("Display", "display", "display", "displayCfg", "Run.Display.St.init cfg.displayCfg"),
+    ("Keys", "keys", "keys", None, "Run.Keys.St.init"),
 ]
 extra = sys.argv[1:]  # e.g. Relay:relay:relay:relayCfg
 for e in extra:
@@ -17,6 +20,17 @@ for e in extra:
     COMPS.append((m, f, d, None if c == "-" else c, init))
 
 FLUSH = [c for c in COMPS if c[0] == "Intent"]
+EXTRA_SIMP = {"Notify": ["Run.Notify.ports"]}
+ALL_DOMAINS = ["shell", "intent", "inc", "theme", "identity", "relay", "storage", "keys", "media",
+    "notify", "resource", "config", "upload", "value", "outbox", "cvm", "link", "pow", "display"]
+BYDOM = {c[2]: (i, c) for i, c in enumerate(COMPS)}
+
+def onlyChanged(i, lemma_fmt):
+    parts = []
+    for k, c2 in enumerate(COMPS):
+        parts.append(lemma_fmt.format(m=c2[0]) if k == i else "fun h1 => .inl h1")
+    return "⟨" + ", ".join(parts) + ", trivial⟩"
+
 
 L = []
 w = L.append
@@ -362,16 +376,13 @@ w("""theorem Inv.message {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg
       split
       · rename_i cx hcx
         have hlive := ctxOf_live hi.ports hcx
-        cases d <;> simp only [napStep, lift] <;> (try exact hi) <;> split <;> (try exact hi)""")
-def onlyChanged(i, lemma_fmt):
-    parts = []
-    for k, c2 in enumerate(COMPS):
-        parts.append(lemma_fmt.format(m=c2[0]) if k == i else "fun h1 => .inl h1")
-    return "⟨" + ", ".join(parts) + ", trivial⟩"
-
-w("        all_goals first")
-for i, c in enumerate(COMPS):
-    w(f"          | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact {onlyChanged(i, 'fun h1 => Run.{m}.handle_mentions _ _ _ _ _ _ hlive h1')})")
+        cases d""")
+for d in ALL_DOMAINS:
+    if d in BYDOM:
+        i, c = BYDOM[d]
+        w(f"        case {d} =>\n          simp only [napStep, lift]\n          split\n          · apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]\n            exact {onlyChanged(i, 'fun h1 => Run.{m}.handle_mentions _ _ _ _ _ _ hlive h1')}\n          · exact hi\n          · exact hi")
+    else:
+        w(f"        case {d} => exact hi")
 w("""      · exact hi
     · exact hi
 
@@ -484,10 +495,14 @@ theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
 theorem Inv.reply {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (tag : CallTag)
     (r : Reply) : Inv h cfg (replyStep h s tag r).1 := by
   simp only [replyStep]
-  split <;> (try exact hi)""")
-w("  all_goals first")
-for i, c in enumerate(COMPS):
-    w(f"    | (apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]; exact {onlyChanged(i, 'fun h1 => Run.{m}.onReply_mentions _ _ _ _ _ _ h1')})")
+  generalize tag.domain = d
+  cases d""")
+for d in ALL_DOMAINS:
+    if d in BYDOM:
+        i, c = BYDOM[d]
+        w(f"  case {d} =>\n    apply Inv.of_mentions hi; rfl; rfl; intro q; simp only [mentionsList, Pw]\n    exact {onlyChanged(i, 'fun h1 => Run.{m}.onReply_mentions _ _ _ _ _ _ h1')}")
+    else:
+        w(f"  case {d} => exact hi")
 w("""
 theorem Inv.event {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (e : HostEvent) :
     Inv h cfg (eventStep h s e).1 := by
@@ -501,7 +516,7 @@ theorem Inv.init (h : Host) (cfg : Config) : Inv h cfg (.init cfg) where
   ports := by simp [RtState.init, ShellState.init]
   clean := by
     intro p _
-    simp [mentions, mentionsList, RtState.init""" + "".join(f", Run.{c[0]}.St.init, Run.{c[0]}.mentions" for c in COMPS) + """]
+    simp [mentions, mentionsList, RtState.init""" + "".join(f", Run.{c[0]}.St.init, Run.{c[0]}.mentions" + "".join(", " + x for x in EXTRA_SIMP.get(c[0], [])) for c in COMPS) + """]
 
 theorem Inv.step {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (i : Input) :
     Inv h cfg (step h cfg s i).1 := by

@@ -43,7 +43,9 @@ def allDomains : List Domain :=
    .resource, .config, .upload, .value, .outbox, .cvm, .link, .pow, .display]
 
 def testCfg : Config :=
-  { shell := { supported := allDomains, policy := fun _ => allDomains } }
+  { shell := { supported := allDomains, policy := fun _ => allDomains }
+    displayCfg := { devices := [{ id := "desk", width := 800, height := 480, type := .eink }],
+                    permitted := fun _ _ => true } }
 
 def publisher : Pubkey := hexOf 0xabc
 

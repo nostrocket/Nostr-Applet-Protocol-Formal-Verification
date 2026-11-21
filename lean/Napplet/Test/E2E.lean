@@ -135,4 +135,43 @@ def sInv := post sCat.1 7 "{ \"type\": \"intent.invoke\", \"id\": \"i1\", \"requ
 #guard sendsAre 7 (post sCat.1 7 "{ \"type\": \"intent.invoke\", \"id\": \"i2\", \"request\": { \"archetype\": \"emoji-list\", \"action\": \"open\", \"convention\": \"napplet:emoji-list/open\" } }").2
   ["{ \"type\": \"intent.invoke.result\", \"id\": \"i2\", \"result\": { \"ok\": false, \"error\": \"no handler\" } }"]
 
+/-! ### NAP-NOTIFY -/
+
+def sPerm := post s1 7 "{ \"type\": \"notify.permission.request\", \"id\": \"p1\" }"
+#guard sendsAre 7 sPerm.2 ["{ \"type\": \"notify.controls\", \"controls\": [\"toasts\", \"badges\", \"actions\", \"channels\"] }"]
+#guard (calls sPerm.2).length == 1
+def sGranted := Runtime.step testHost testCfg sPerm.1 (.reply ⟨.notify, 0⟩ (.decision true none))
+#guard sendsAre 7 sGranted.2 ["{ \"type\": \"notify.permission.result\", \"id\": \"p1\", \"granted\": true }"]
+def sNote := post sGranted.1 7 "{ \"type\": \"notify.send\", \"id\": \"n1\", \"title\": \"New message\", \"body\": \"Alice: hey!\", \"priority\": \"normal\" }"
+#guard sendsAre 7 sNote.2 ["{ \"type\": \"notify.send.result\", \"id\": \"n1\", \"notificationId\": \"shell-0\" }"]
+#guard sendsAre 7 (Runtime.step testHost testCfg sNote.1 (.event (.nap .notify "clicked" (Json.parse! "{\"notificationId\":\"shell-0\"}")))).2
+  ["{ \"type\": \"notify.clicked\", \"notificationId\": \"shell-0\" }"]
+-- before permission: refused, nothing created
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"notify.send\", \"id\": \"n3\", \"title\": \"x\" }").2
+  ["{ \"type\": \"notify.controls\", \"controls\": [\"toasts\", \"badges\", \"actions\", \"channels\"] }",
+   "{ \"type\": \"notify.send.result\", \"id\": \"n3\", \"error\": \"permission denied\" }"]
+
+/-! ### NAP-DISPLAY -/
+
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"display.list\", \"id\": \"d1\" }").2
+  ["{ \"type\": \"display.list.result\", \"id\": \"d1\", \"displays\": [{ \"id\": \"desk\", \"width\": 800, \"height\": 480, \"type\": \"eink\" }] }"]
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"display.push\", \"id\": \"d2\", \"displayId\": \"desk\", \"pixels\": [{ \"x\": 0, \"y\": 0, \"bytes\": [255, 0, 0] }, { \"x\": 1, \"y\": 0, \"bytes\": [0, 255, 0] }] }").2
+  ["{ \"type\": \"display.push.result\", \"id\": \"d2\" }"]
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"display.push\", \"id\": \"d3\", \"displayId\": \"nope\", \"pixels\": [{ \"x\": 0, \"y\": 0, \"bytes\": [255, 0, 0] }] }").2
+  ["{ \"type\": \"display.push.result\", \"id\": \"d3\", \"error\": \"not-found\" }"]
+
+/-! ### NAP-KEYS -/
+
+def sKey := post s1 7 "{ \"type\": \"keys.registerAction\", \"id\": \"r1\", \"action\": { \"id\": \"editor.save\", \"label\": \"Save\", \"defaultKey\": \"Ctrl+S\" } }"
+#guard sendsAre 7 sKey.2
+  ["{ \"type\": \"keys.registerAction.result\", \"id\": \"r1\", \"actionId\": \"editor.save\", \"binding\": \"Ctrl+S\" }",
+   "{ \"type\": \"keys.bindings\", \"bindings\": [{ \"actionId\": \"editor.save\", \"key\": \"Ctrl+S\" }] }"]
+#guard sendsAre 7 (post sKey.1 7 "{ \"type\": \"keys.forward\", \"key\": \"s\", \"code\": \"KeyS\", \"ctrl\": true, \"alt\": false, \"shift\": false, \"meta\": false }").2
+  ["{ \"type\": \"keys.action\", \"actionId\": \"editor.save\" }"]
+-- the same combo cannot be bound twice
+#guard sendsAre 7 (post sKey.1 7 "{ \"type\": \"keys.registerAction\", \"id\": \"r1\", \"action\": { \"id\": \"editor.save\", \"label\": \"Save\" } }").2
+  ["{ \"type\": \"keys.registerAction.result\", \"id\": \"r1\", \"actionId\": \"editor.save\", \"error\": \"duplicate action ID\" }"]
+-- teardown drops the bindings: the next napplet on the port starts clean
+#guard (Runtime.mentions (Runtime.step testHost testCfg sKey.1 (.portClosed 7)).1 7) == false
+
 end Napplet.Test
