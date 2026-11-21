@@ -18,7 +18,54 @@ Run with `lake env lean Audit.lean`.
 
 open Napplet
 
--- NIP-5D core
+-- The composed machine (Runtime.step over JSON): headline results
+#print axioms Runtime.Reachable.inv
+#print axioms Runtime.shell_inv
+#print axioms Runtime.teardown_clears
+#print axioms Runtime.port_closed_teardown
+#print axioms Runtime.second_hello_teardown
+#print axioms Runtime.ctx_verified
+#print axioms Runtime.message_unbound_silent
+#print axioms Runtime.message_unexposed_silent
+-- components as composed (each runs with the context Runtime derives from the binding)
+#print axioms Run.Shell.init_exactly_once
+#print axioms Run.Theme.changed_only_exposed
+#print axioms Run.Identity.getPublicKey_no_error
+#print axioms Run.Storage.handle_isolated
+#print axioms Run.Storage.handle_quota
+#print axioms Run.Inc.emit_delivery
+#print axioms Run.Inc.open_ok
+#print axioms Run.Intent.handle_sends
+#print axioms Run.Relay.handle_sign
+#print axioms Run.Relay.onReply_delivers_plaintext
+#print axioms Run.Outbox.onReply_publish_relays
+#print axioms Run.Resource.jobItems_policy
+#print axioms Run.Resource.cancel_drops_late
+#print axioms Run.Upload.onReply_put_requires_policy
+#print axioms Run.Value.onReply_pay_authorized
+#print axioms Run.Link.onReply_opened_scheme_safe
+#print axioms Run.Notify.show_safe
+#print axioms Run.Display.push_applies
+#print axioms Run.Keys.handle_inv
+#print axioms Run.Media.handle_inv
+#print axioms Run.Config.snapshot_valid
+#print axioms Run.Cvm.late_reply_dropped
+#print axioms Run.Pow.onReply_done_ok
+-- wire codec round trips
+#print axioms NostrEvent.ofJson?_toJson
+#print axioms EventTemplate.ofJson?_toJson
+#print axioms Run.Storage.decode_encodeReq
+#print axioms Run.Relay.decode_encodeReq
+#print axioms Run.Resource.Base64.encode_decode?
+-- napplet side (bootstrap and binding)
+#print axioms Binding.boot_once
+#print axioms Binding.request_fresh
+#print axioms Binding.resolve_once
+#print axioms Binding.register_delivers_buffer
+-- identity
+#print axioms checkManifest_principal
+
+-- NIP-5D core (pure shell)
 #print axioms checkManifest_identity
 #print axioms checkManifest_dTag
 #print axioms andFilter_is_not_compatibility
