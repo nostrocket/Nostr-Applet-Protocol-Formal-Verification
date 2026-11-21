@@ -20,6 +20,9 @@ COMPS = [
     ("Resource", "resource", "resource", "resourceCfg", "Run.Resource.St.init cfg.resourceCfg"),
     ("Upload", "upload", "upload", "uploadCfg", "Run.Upload.St.init cfg.uploadCfg"),
     ("Link", "link", "link", "linkCfg", "Run.Link.St.init cfg.linkCfg"),
+    ("Value", "value", "value", "valueCfg", "Run.Value.St.init cfg.valueCfg"),
+    ("Cvm", "cvm", "cvm", "cvmCfg", "Run.Cvm.St.init cfg.cvmCfg"),
+    ("Pow", "pow", "pow", "powCfg", "Run.Pow.St.init cfg.powCfg"),
 ]
 extra = sys.argv[1:]  # e.g. Relay:relay:relay:relayCfg
 for e in extra:

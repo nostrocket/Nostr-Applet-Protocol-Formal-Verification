@@ -304,4 +304,35 @@ def sLinkOk := Runtime.step testHost testCfg sLink.1 (.reply ⟨.link, 0⟩ (.de
 #guard sendsAre 7 (Runtime.step testHost testCfg sLink.1 (.reply ⟨.link, 0⟩ (.decision false none))).2
   ["{ \"type\": \"link.open.result\", \"id\": \"l1\", \"status\": \"denied\", \"error\": \"user-denied\" }"]
 
+/-! ### NAP-VALUE -/
+
+def valueReq : String := "{ \"rail\": \"zap\", \"amountMsat\": 21000, \"comment\": \"great note\", \"target\": { \"type\": \"zap\", \"eventId\": \"abc...\", \"pubkey\": \"def...\", \"relays\": [\"wss://relay.example.com\"] } }"
+def sQ := post sU 7 ("{ \"type\": \"value.quote\", \"id\": \"q1\", \"request\": " ++ valueReq ++ " }")
+#guard match calls sQ.2 with | [(⟨.value, 0⟩, .nap .value "quote" _)] => true | _ => false
+#guard sendsAre 7 (Runtime.step testHost testCfg sQ.1 (.reply ⟨.value, 0⟩ (.json (Json.parse! "{\"feesMsat\":10,\"expiresAt\":1234567999}")))).2
+  ["{ \"type\": \"value.quote.result\", \"id\": \"q1\", \"quote\": { \"ok\": true, \"rail\": \"zap\", \"amountMsat\": 21000, \"feesMsat\": 10, \"expiresAt\": 1234567999 } }"]
+-- send without an allowance asks the user first; refusal moves no money
+def sSend := post sU 7 ("{ \"type\": \"value.send\", \"id\": \"s2\", \"request\": " ++ valueReq ++ " }")
+#guard match calls sSend.2 with | [(_, .prompt .value "send" _)] => true | _ => false
+#guard (calls (Runtime.step testHost testCfg sSend.1 (.reply (firstTag sSend.2) (.decision false none))).2).all
+  fun (_, c) => match c with | .nap .value "pay" _ => false | _ => true
+
+/-! ### NAP-CVM -/
+
+def sD := post sU 7 "{ \"type\": \"cvm.discover\", \"id\": \"d1\", \"query\": { \"search\": \"relay\", \"limit\": 5 } }"
+#guard sendsAre 7 (Runtime.step testHost testCfg sD.1 (.reply ⟨.cvm, 1⟩ (.json (Json.parse! "{\"servers\":[{\"pubkey\":\"65a334\",\"name\":\"Relay tools\"}]}")))).2
+  ["{ \"type\": \"cvm.discover.result\", \"id\": \"d1\", \"servers\": [{ \"pubkey\": \"65a334\", \"name\": \"Relay tools\" }] }"]
+-- registry is not implemented by default: exactly one result, unsupported
+#guard sendsAre 7 (post sU 7 "{ \"type\": \"cvm.registry.list\", \"id\": \"l1\" }").2
+  ["{ \"type\": \"cvm.registry.list.result\", \"id\": \"l1\", \"error\": \"unsupported method\" }"]
+
+/-! ### NAP-POW -/
+
+def sMine := post sU 7 "{ \"type\": \"pow.mine\", \"id\": \"m1\", \"jobId\": \"job-1\", \"template\": { \"kind\": 1, \"content\": \"gm\", \"tags\": [] }, \"target\": 21, \"options\": { \"workers\": 4, \"priority\": 0 } }"
+#guard sendsAre 7 sMine.2 ["{ \"type\": \"pow.mine.result\", \"id\": \"m1\", \"jobId\": \"job-1\", \"accepted\": true, \"state\": \"mining\" }"]
+def sMined := Runtime.step testHost testCfg sMine.1 (.reply ⟨.pow, 1⟩ (.json (Json.parse! "{\"nonce\":\"1099148\",\"hashes\":4980000,\"elapsedMs\":12100}")))
+#guard (sentTo 7 sMined.2).getLast?.map (Json.same · (Json.parse! ("{ \"type\": \"pow.done\", \"jobId\": \"job-1\", \"result\": { \"jobId\": \"job-1\", \"ok\": true, \"event\": { \"id\": \"" ++ hexOf 0x2db750 ++ "\", \"pubkey\": \"def...\", \"created_at\": 0, \"kind\": 1, \"tags\": [[\"nonce\", \"1099148\", \"21\"]], \"content\": \"gm\" }, \"pow\": 234, \"nonce\": \"1099148\", \"hashes\": 4980000, \"elapsedMs\": 12100 } }"))) == some true
+#guard sendsAre 7 (post sMine.1 7 "{ \"type\": \"pow.mine\", \"id\": \"m2\", \"jobId\": \"job-1\", \"template\": { \"kind\": 1, \"content\": \"gm\" }, \"target\": 21 }").2
+  ["{ \"type\": \"pow.mine.result\", \"id\": \"m2\", \"jobId\": \"job-1\", \"accepted\": false, \"state\": \"error\", \"error\": \"duplicate jobId\" }"]
+
 end Napplet.Test
