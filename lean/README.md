@@ -436,13 +436,22 @@ the model.
 ## Not modelled yet
 
 - The deferred CLASS and CONNECT tracks.
-- Behaviour upstream leaves undefined:
-  - NAP-MEDIA's out-of-band source binding.
-  - NIP-59 gift-wrap decryption depth (the host's `encryptedWith`/`decrypt` decide it).
-  - Carrier attachment of NAP-RESOURCE sidecars (NAP-RESOURCE defers it to the
-    carrier specs; NAP-RELAY's attachment is never produced, see RELAY above).
-  - Cancelling an in-progress upload (NAP-UPLOAD has no wire message for it).
-  - Paged `relay.query` (`stream: true`), proposed in review but absent.
+- Behaviour upstream leaves undefined (each with the upstream text that leaves it
+  open, and what the model does instead, so an implementer needs nothing more):
+  - NAP-MEDIA §Shell Behavior: `source` is required "unless the shell defines a
+    separate out-of-band source binding", and no such binding is defined. The model
+    defines none: a shell-owned create without `source` is `"missing source"`.
+  - NAP-RELAY says to decrypt "incoming encrypted events (NIP-04/NIP-44)" and never
+    mentions NIP-59 gift wraps (kind 1059 appears only in the privacy text), so how
+    deep to unwrap is undefined. The host's `encryptedWith`/`decrypt` contract
+    decides, per NIP-17/NIP-59.
+  - NAP-RESOURCE §Sidecar Pre-Resolution: "Concrete carrier attachments are deferred
+    to the importing spec changes." The model never sends sidecar resources.
+  - NAP-UPLOAD lists the state `cancelled` but defines no cancel operation or wire
+    message. The model has nothing to receive; `cancelled` arises only from a declined
+    consent prompt.
+  - Paged `relay.query` (`stream: true`) appears only in review discussion, not in the
+    NAP-RELAY text. The model's `relay.query` returns one result.
 
 Optional behaviours the model leaves out on purpose (all MAY or unquantified SHOULD):
 INC `shell:*` topic interception and emit ACLs, INTENT discovery of uninstalled
