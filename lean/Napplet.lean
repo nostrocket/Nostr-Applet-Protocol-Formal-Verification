@@ -33,3 +33,4 @@ import Napplet.Event
 import Napplet.Host
 import Napplet.Component
 import Napplet.Runtime
+import Napplet.Test.E2E
