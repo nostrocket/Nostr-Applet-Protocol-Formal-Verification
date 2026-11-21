@@ -15,6 +15,8 @@ COMPS = [
     ("Keys", "keys", "keys", None, "Run.Keys.St.init"),
     ("Relay", "relay", "relay", "relayCfg", "Run.Relay.St.init cfg.relayCfg"),
     ("Outbox", "outbox", "outbox", "outboxCfg", "Run.Outbox.St.init cfg.outboxCfg"),
+    ("Media", "media", "media", "mediaCfg", "Run.Media.St.init cfg.mediaCfg"),
+    ("Config", "config", "config", None, "Run.Config.St.init"),
 ]
 extra = sys.argv[1:]  # e.g. Relay:relay:relay:relayCfg
 for e in extra:

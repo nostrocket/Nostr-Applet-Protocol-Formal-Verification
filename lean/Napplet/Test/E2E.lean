@@ -219,4 +219,29 @@ def sOPDone := runAll testHost testCfg sOP.1
 #guard sendsAre 7 sOPDone.2
   ["{ \"type\": \"outbox.publish.result\", \"id\": \"p2\", \"ok\": true, \"event\": { \"id\": \"ev2...\", \"pubkey\": \"def...\", \"created_at\": 0, \"kind\": 1, \"tags\": [], \"content\": \"hi\", \"sig\": \"s\" }, \"eventId\": \"ev2...\", \"relays\": { \"wss://relay.example.com\": true } }"]
 
+/-! ### NAP-MEDIA -/
+
+def sMed := post s1 7 "{ \"type\": \"media.session.create\", \"id\": \"m1\", \"owner\": \"napplet\", \"sessionId\": \"s1\", \"metadata\": { \"title\": \"Episode 12\", \"artist\": \"Alice\", \"mediaType\": \"audio\" } }"
+#guard (sentTo 7 sMed.2).head?.map (Json.same · (Json.parse! "{ \"type\": \"media.session.create.result\", \"id\": \"m1\", \"sessionId\": \"s1\", \"owner\": \"napplet\" }")) == some true
+#guard sendsAre 7 (post sMed.1 7 "{ \"type\": \"media.session.destroy\", \"sessionId\": \"s1\" }").2
+  ["{ \"type\": \"media.session.ended\", \"sessionId\": \"s1\", \"reason\": \"destroyed\" }"]
+-- unknown session ids are silently ignored
+#guard (sentTo 7 (post sMed.1 7 "{ \"type\": \"media.session.destroy\", \"sessionId\": \"nope\" }").2).isEmpty
+
+/-! ### NAP-CONFIG -/
+
+def cfgSchema : String := "{ \"type\": \"config.registerSchema\", \"id\": \"r1\", \"schema\": { \"$schema\": \"http://json-schema.org/draft-07/schema#\", \"type\": \"object\", \"properties\": { \"theme\": { \"type\": \"string\", \"enum\": [\"light\", \"dark\"], \"default\": \"dark\" } } }, \"version\": 1 }"
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"config.get\", \"id\": \"g0\" }").2
+  ["{ \"type\": \"config.schemaError\", \"code\": \"no-schema\", \"error\": \"no configuration schema is registered\" }"]
+def sReg := post s1 7 cfgSchema
+#guard sendsAre 7 sReg.2 ["{ \"type\": \"config.registerSchema.result\", \"id\": \"r1\", \"ok\": true }"]
+#guard sendsAre 7 (post sReg.1 7 "{ \"type\": \"config.get\", \"id\": \"g1\" }").2
+  ["{ \"type\": \"config.values\", \"id\": \"g1\", \"values\": { \"theme\": \"dark\" } }"]
+def sCSub := post sReg.1 7 "{ \"type\": \"config.subscribe\" }"
+#guard sendsAre 7 sCSub.2 ["{ \"type\": \"config.values\", \"values\": { \"theme\": \"dark\" } }"]
+#guard sendsAre 7 (Runtime.step testHost testCfg sCSub.1 (.event (.nap .config "edited" (Json.parse! "{\"window\":1,\"values\":{\"theme\":\"light\"}}")))).2
+  ["{ \"type\": \"config.values\", \"values\": { \"theme\": \"light\" } }"]
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"config.registerSchema\", \"id\": \"r2\", \"schema\": { \"type\": \"object\", \"properties\": { \"username\": { \"type\": \"string\", \"pattern\": \"^[a-z]+$\" } } } }").2
+  ["{ \"type\": \"config.registerSchema.result\", \"id\": \"r2\", \"ok\": false, \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }"]
+
 end Napplet.Test
