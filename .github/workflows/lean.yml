@@ -1,0 +1,37 @@
+name: Lean
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lean
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build and check proofs
+        run: lake build
+
+      - name: No sorry
+        run: |
+          if grep -rnw sorry Napplet Napplet.lean; then
+            echo "::error::sorry found"; exit 1
+          fi
+
+      - name: Axiom audit
+        run: |
+          lake env lean Audit.lean | tee axioms.txt
+          if grep -v "depends on axioms: \[propext\(, Classical.choice\)\?\(, Quot.sound\)\?\]\|does not depend on any axioms" axioms.txt; then
+            echo "::error::non-standard axiom found"; exit 1
+          fi

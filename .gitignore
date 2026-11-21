@@ -1,0 +1,8 @@
+# Local drafts, not published
+UPSTREAM-ISSUES.md
+
+# Lean build output
+.lake/
+
+# OS / editor
+.DS_Store

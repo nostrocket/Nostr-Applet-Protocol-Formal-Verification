@@ -17,6 +17,13 @@ to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md).
 cd lean && lake build
 ```
 
+```bash
+cd lean && lake env lean Audit.lean
+```
+
+`Audit.lean` prints the axioms behind the headline theorems. CI fails if anything other
+than the three standard axioms appears.
+
 ## What is proved
 
 | Module | Spec | Results |
@@ -142,3 +149,7 @@ Each of these is a candidate clarification for the spec:
 RESOURCE's `hashtree`/`htree`/`nostr` scheme details and
 canonical base64; message payload schemas beyond what the proofs need; NIP-19
 `naddr` decoding; and the deferred CLASS and CONNECT tracks.
+
+## Licence
+
+[Mozilla Public License 2.0](../LICENSE).
