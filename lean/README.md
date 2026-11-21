@@ -16,20 +16,14 @@ but the model was built from the upstream texts at the commits listed below.
   tables is decoded or produced by its component; all 91 JSON request examples in the
   NAP specs decode (`Napplet/Test/UpstreamExamples.lean`); `Napplet/Test/E2E.lean`
   feeds upstream example JSON for every NAP through `Runtime.step`. Of the 118 JSON
-  response examples in the NAP specs, 111 are reproduced verbatim by guards
-  (`scripts/response_coverage.py` finds 109; it misses the two THEME examples, whose
-  guards build the JSON by concatenation). The other 7 cannot be produced verbatim,
-  and each is reproduced in substance:
+  response examples in the NAP specs, 114 are reproduced verbatim by guards
+  (`scripts/response_coverage.py`). The other 4 cannot be produced verbatim, and each
+  is reproduced in substance:
   - INC (2): `c-abc` and `endpoint-music-controller` are illustrative ids; the
     runtime assigns `c-<n>` and `endpoint-<window>`. The same messages with runtime
     ids are checked end to end.
-  - POW (2): checked in `Run/Pow.lean` against the upstream text with its `…`
-    placeholders, which the coverage script does not match.
   - MEDIA (1): the rejected-create example carries `sessionId`, which contradicts
     upstream's prose ("the session was not created"); the model omits it.
-  - CONFIG (1): upstream shows a rejected schema as a `config.schemaError` push; the
-    model answers the correlated `config.registerSchema.result` (CONFIG decision) with
-    the same `code` and `error`.
   - CVM (1): the registry is off by default (kehto does not implement it); with it on,
     `Run/Cvm.lean` checks the example with 64-hex hashes in place of the abbreviated
     ones.
@@ -156,6 +150,11 @@ Over every `Runtime.Reachable` state:
   policy exposure (lifts `dispatch_sender_verified`).
 - `message_unbound_silent`, `message_unexposed_silent`: JSON on an unbound port, or
   for an unknown or unexposed domain, produces nothing.
+- `message_dispatch` and one `message_<nap>` theorem per NAP: a decoded request on a
+  bound port with that domain exposed changes only that component's state and emits
+  exactly its `handle` effects, with the context derived from the binding. Every
+  component theorem about `handle` below is therefore a theorem about
+  `Runtime.step`.
 
 Each component proves `decode (encodeReq r) = .ok r` and lifts its NAP's pure
 results to what it actually emits. Examples: `Run.Relay.handle_sign`,
@@ -408,7 +407,9 @@ are dropped; caller reasons on commands are replaced by `user`; a napplet-owned
 session that cannot pause on focus loss is retired with `policy`; a failed create
 result omits `sessionId` (upstream's prose; its example includes it).
 
-CONFIG: a rejected schema is reported only in `config.registerSchema.result`;
+CONFIG: a rejected schema gets the correlated `config.registerSchema.result` and the
+`config.schemaError` push upstream requires ("pushes `config.schemaError` messages when
+it rejects a `registerSchema` call"), with the same code and error;
 unknown standard keywords are `invalid-schema`; `$schema` may be draft-07, 2019-09 or
 2020-12; a lower version is `version-conflict`; defaults resolve persisted → own
 default → ancestor default, invalid candidates skipped (decision 26); secrets

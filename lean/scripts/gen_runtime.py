@@ -592,7 +592,34 @@ theorem port_closed_teardown {h : Host} {cfg : Config} {s : RtState} (hr : Reach
   · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
   · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
 
-/-- Every endpoint context a component sees (the only source of the sender's identity)
+/-- Routing over the composed machine: a JSON message on a bound port whose domain is
+exposed is handled by that domain's component with the context derived from the
+binding (`Ctx.ofBinding`). -/
+theorem message_dispatch {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {d : Domain} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some d) (hx : d ∈ b.exposed) :
+    step h cfg s (.message p j) = napStep h (world s) (Ctx.ofBinding p b (s.inst b.window)) s j d := by
+  simp [step, he, Napplet.step, hb, hd, hx, ctxOf]
+
+""")
+for i, c in enumerate(COMPS):
+    m, f, d = c[0], c[1], c[2]
+    w(f"""/-- NAP-{m.upper()} over the composed machine: a decoded request on a bound port with
+`{d}` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.{m}` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_{f} {{h : Host}} {{cfg : Config}} {{s : RtState}} {{p : PortId}} {{j : Json}}
+    {{env : Envelope}} {{b : Binding}} {{r : Run.{m}.Req}} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .{d}) (hx : Domain.{d} ∈ b.exposed)
+    (hr : Run.{m}.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({{ s with {f} := (Run.{m}.handle h (world s) cx s.{f} r).1 }},
+       (Run.{m}.handle h (world s) cx s.{f} r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+""")
+w("""/-- Every endpoint context a component sees (the only source of the sender's identity)
 came from verified artifact bytes, and its domains are exactly the policy exposure
 (NIP-5D §Identity; lifts `dispatch_sender_verified`). -/
 theorem ctx_verified {h : Host} {cfg : Config} {s : RtState} (hr : Reachable h cfg s)

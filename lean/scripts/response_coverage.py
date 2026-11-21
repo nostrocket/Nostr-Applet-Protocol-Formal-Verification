@@ -13,11 +13,15 @@ lean = ""
 for f in glob.glob("Napplet/**/*.lean", recursive=True): lean += open(f).read()
 lits = set()
 for m in re.finditer(r'"((?:[^"\\]|\\.)*)"', lean):
-    t = m.group(1).encode().decode('unicode_escape') if '\\' in m.group(1) else m.group(1)
-    try:
-        o = json.loads(t)
-        if isinstance(o, dict): lits.add(canon(o))
+    raw = m.group(1)
+    cands = [raw, raw.replace('\\"', '"').replace('\\\\', '\\')]
+    try: cands.append(json.loads('"' + raw + '"'))
     except Exception: pass
+    for t in cands:
+        try:
+            o = json.loads(t)
+            if isinstance(o, dict): lits.add(canon(o))
+        except Exception: pass
 tot = hit = 0; miss = {}
 for N, f in names.items():
     lines = open(up + f'NAP-{N}.md').read().split('\n'); i = 0

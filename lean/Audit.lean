@@ -27,6 +27,28 @@ open Napplet
 #print axioms Runtime.ctx_verified
 #print axioms Runtime.message_unbound_silent
 #print axioms Runtime.message_unexposed_silent
+-- routing: each NAP's component, with the binding-derived context, is exactly what
+-- Runtime.step runs for that domain, so every component theorem below holds of it
+#print axioms Runtime.message_dispatch
+#print axioms Runtime.message_shellNap
+#print axioms Runtime.message_theme
+#print axioms Runtime.message_identity
+#print axioms Runtime.message_storage
+#print axioms Runtime.message_inc
+#print axioms Runtime.message_intent
+#print axioms Runtime.message_notify
+#print axioms Runtime.message_display
+#print axioms Runtime.message_keys
+#print axioms Runtime.message_relay
+#print axioms Runtime.message_outbox
+#print axioms Runtime.message_media
+#print axioms Runtime.message_config
+#print axioms Runtime.message_resource
+#print axioms Runtime.message_upload
+#print axioms Runtime.message_link
+#print axioms Runtime.message_value
+#print axioms Runtime.message_cvm
+#print axioms Runtime.message_pow
 -- components as composed (each runs with the context Runtime derives from the binding)
 #print axioms Run.Shell.init_exactly_once
 #print axioms Run.Theme.changed_only_exposed

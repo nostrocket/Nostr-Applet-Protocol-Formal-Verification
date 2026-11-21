@@ -242,7 +242,12 @@ def sCSub := post sReg.1 7 "{ \"type\": \"config.subscribe\" }"
 #guard sendsAre 7 (Runtime.step testHost testCfg sCSub.1 (.event (.nap .config "edited" (Json.parse! "{\"window\":1,\"values\":{\"theme\":\"light\"}}")))).2
   ["{ \"type\": \"config.values\", \"values\": { \"theme\": \"light\" } }"]
 #guard sendsAre 7 (post s1 7 "{ \"type\": \"config.registerSchema\", \"id\": \"r2\", \"schema\": { \"type\": \"object\", \"properties\": { \"username\": { \"type\": \"string\", \"pattern\": \"^[a-z]+$\" } } } }").2
-  ["{ \"type\": \"config.registerSchema.result\", \"id\": \"r2\", \"ok\": false, \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }"]
+  ["{ \"type\": \"config.registerSchema.result\", \"id\": \"r2\", \"ok\": false, \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }",
+   "{ \"type\": \"config.schemaError\", \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }"]
+-- the upstream schemaError example, verbatim
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"config.registerSchema\", \"id\": \"e1\", \"schema\": { \"type\": \"string\" } }").2
+  ["{ \"type\": \"config.registerSchema.result\", \"id\": \"e1\", \"ok\": false, \"code\": \"invalid-schema\", \"error\": \"schema root must be of type `object`\" }",
+   "{ \"type\": \"config.schemaError\", \"code\": \"invalid-schema\", \"error\": \"schema root must be of type `object`\" }"]
 
 /-! ### NAP-RESOURCE -/
 
@@ -355,12 +360,12 @@ def sTiny : RtState := (runAll testHost tinyCfg (.init tinyCfg) (bootInputs 1 7 
 def themeFull : String := "{ \"colors\": { \"background\": \"#1a1a2e\", \"text\": \"#e0e0e0\", \"primary\": \"#6c3ce0\" }, \"fonts\": { \"body\": { \"name\": \"Inter\", \"url\": \"https://example.com/inter.woff2\" }, \"title\": { \"name\": \"Playfair Display\", \"url\": \"https://example.com/playfair.woff2\" } }, \"background\": { \"url\": \"https://example.com/bg.jpg\", \"mode\": \"cover\", \"mime\": \"image/jpeg\" }, \"title\": \"MK Dark Theme\" }"
 def sTFull := (Runtime.step testHost testCfg s1 (.event (.themeChanged (some (Json.parse! themeFull))))).1
 #guard sendsAre 7 (post sTFull 7 "{ \"type\": \"theme.get\", \"id\": \"t1\" }").2
-  ["{ \"type\": \"theme.get.result\", \"id\": \"t1\", \"theme\": " ++ themeFull ++ " }"]
+  ["{ \"type\": \"theme.get.result\", \"id\": \"t1\", \"theme\": { \"colors\": { \"background\": \"#1a1a2e\", \"text\": \"#e0e0e0\", \"primary\": \"#6c3ce0\" }, \"fonts\": { \"body\": { \"name\": \"Inter\", \"url\": \"https://example.com/inter.woff2\" }, \"title\": { \"name\": \"Playfair Display\", \"url\": \"https://example.com/playfair.woff2\" } }, \"background\": { \"url\": \"https://example.com/bg.jpg\", \"mode\": \"cover\", \"mime\": \"image/jpeg\" }, \"title\": \"MK Dark Theme\" } }"]
 #guard sendsAre 7 (post sTheme.1 7 "{ \"type\": \"theme.get\", \"id\": \"t2\" }").2
   ["{ \"type\": \"theme.get.result\", \"id\": \"t2\", \"theme\": { \"colors\": { \"background\": \"#ffffff\", \"text\": \"#333333\", \"primary\": \"#0066cc\" } } }"]
 def ghDark : String := "{ \"colors\": { \"background\": \"#0d1117\", \"text\": \"#c9d1d9\", \"primary\": \"#58a6ff\" }, \"title\": \"GitHub Dark\" }"
 #guard sendsAre 7 (Runtime.step testHost testCfg s1 (.event (.themeChanged (some (Json.parse! ghDark))))).2
-  ["{ \"type\": \"theme.changed\", \"theme\": " ++ ghDark ++ " }"]
+  ["{ \"type\": \"theme.changed\", \"theme\": { \"colors\": { \"background\": \"#0d1117\", \"text\": \"#c9d1d9\", \"primary\": \"#58a6ff\" }, \"title\": \"GitHub Dark\" } }"]
 
 -- NAP-IDENTITY
 def sAb := Runtime.step testHost testCfg s1 (.event (.userChanged "ab12cd..."))

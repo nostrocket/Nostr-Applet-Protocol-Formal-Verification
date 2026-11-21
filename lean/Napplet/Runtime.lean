@@ -931,6 +931,301 @@ theorem port_closed_teardown {h : Host} {cfg : Config} {s : RtState} (hr : Reach
   · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
   · rw [hsh]; simp [Napplet.step, hb, revoke, hf]
 
+/-- Routing over the composed machine: a JSON message on a bound port whose domain is
+exposed is handled by that domain's component with the context derived from the
+binding (`Ctx.ofBinding`). -/
+theorem message_dispatch {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {d : Domain} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some d) (hx : d ∈ b.exposed) :
+    step h cfg s (.message p j) = napStep h (world s) (Ctx.ofBinding p b (s.inst b.window)) s j d := by
+  simp [step, he, Napplet.step, hb, hd, hx, ctxOf]
+
+
+/-- NAP-SHELL over the composed machine: a decoded request on a bound port with
+`shell` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Shell` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_shellNap {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Shell.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .shell) (hx : Domain.shell ∈ b.exposed)
+    (hr : Run.Shell.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with shellNap := (Run.Shell.handle h (world s) cx s.shellNap r).1 },
+       (Run.Shell.handle h (world s) cx s.shellNap r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-THEME over the composed machine: a decoded request on a bound port with
+`theme` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Theme` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_theme {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Theme.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .theme) (hx : Domain.theme ∈ b.exposed)
+    (hr : Run.Theme.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with theme := (Run.Theme.handle h (world s) cx s.theme r).1 },
+       (Run.Theme.handle h (world s) cx s.theme r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-IDENTITY over the composed machine: a decoded request on a bound port with
+`identity` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Identity` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_identity {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Identity.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .identity) (hx : Domain.identity ∈ b.exposed)
+    (hr : Run.Identity.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with identity := (Run.Identity.handle h (world s) cx s.identity r).1 },
+       (Run.Identity.handle h (world s) cx s.identity r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-STORAGE over the composed machine: a decoded request on a bound port with
+`storage` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Storage` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_storage {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Storage.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .storage) (hx : Domain.storage ∈ b.exposed)
+    (hr : Run.Storage.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with storage := (Run.Storage.handle h (world s) cx s.storage r).1 },
+       (Run.Storage.handle h (world s) cx s.storage r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-INC over the composed machine: a decoded request on a bound port with
+`inc` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Inc` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_inc {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Inc.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .inc) (hx : Domain.inc ∈ b.exposed)
+    (hr : Run.Inc.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with inc := (Run.Inc.handle h (world s) cx s.inc r).1 },
+       (Run.Inc.handle h (world s) cx s.inc r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-INTENT over the composed machine: a decoded request on a bound port with
+`intent` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Intent` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_intent {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Intent.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .intent) (hx : Domain.intent ∈ b.exposed)
+    (hr : Run.Intent.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with intent := (Run.Intent.handle h (world s) cx s.intent r).1 },
+       (Run.Intent.handle h (world s) cx s.intent r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-NOTIFY over the composed machine: a decoded request on a bound port with
+`notify` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Notify` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_notify {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Notify.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .notify) (hx : Domain.notify ∈ b.exposed)
+    (hr : Run.Notify.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with notify := (Run.Notify.handle h (world s) cx s.notify r).1 },
+       (Run.Notify.handle h (world s) cx s.notify r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-DISPLAY over the composed machine: a decoded request on a bound port with
+`display` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Display` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_display {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Display.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .display) (hx : Domain.display ∈ b.exposed)
+    (hr : Run.Display.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with display := (Run.Display.handle h (world s) cx s.display r).1 },
+       (Run.Display.handle h (world s) cx s.display r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-KEYS over the composed machine: a decoded request on a bound port with
+`keys` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Keys` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_keys {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Keys.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .keys) (hx : Domain.keys ∈ b.exposed)
+    (hr : Run.Keys.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with keys := (Run.Keys.handle h (world s) cx s.keys r).1 },
+       (Run.Keys.handle h (world s) cx s.keys r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-RELAY over the composed machine: a decoded request on a bound port with
+`relay` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Relay` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_relay {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Relay.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .relay) (hx : Domain.relay ∈ b.exposed)
+    (hr : Run.Relay.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with relay := (Run.Relay.handle h (world s) cx s.relay r).1 },
+       (Run.Relay.handle h (world s) cx s.relay r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-OUTBOX over the composed machine: a decoded request on a bound port with
+`outbox` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Outbox` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_outbox {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Outbox.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .outbox) (hx : Domain.outbox ∈ b.exposed)
+    (hr : Run.Outbox.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with outbox := (Run.Outbox.handle h (world s) cx s.outbox r).1 },
+       (Run.Outbox.handle h (world s) cx s.outbox r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-MEDIA over the composed machine: a decoded request on a bound port with
+`media` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Media` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_media {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Media.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .media) (hx : Domain.media ∈ b.exposed)
+    (hr : Run.Media.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with media := (Run.Media.handle h (world s) cx s.media r).1 },
+       (Run.Media.handle h (world s) cx s.media r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-CONFIG over the composed machine: a decoded request on a bound port with
+`config` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Config` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_config {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Config.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .config) (hx : Domain.config ∈ b.exposed)
+    (hr : Run.Config.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with config := (Run.Config.handle h (world s) cx s.config r).1 },
+       (Run.Config.handle h (world s) cx s.config r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-RESOURCE over the composed machine: a decoded request on a bound port with
+`resource` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Resource` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_resource {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Resource.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .resource) (hx : Domain.resource ∈ b.exposed)
+    (hr : Run.Resource.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with resource := (Run.Resource.handle h (world s) cx s.resource r).1 },
+       (Run.Resource.handle h (world s) cx s.resource r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-UPLOAD over the composed machine: a decoded request on a bound port with
+`upload` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Upload` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_upload {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Upload.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .upload) (hx : Domain.upload ∈ b.exposed)
+    (hr : Run.Upload.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with upload := (Run.Upload.handle h (world s) cx s.upload r).1 },
+       (Run.Upload.handle h (world s) cx s.upload r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-LINK over the composed machine: a decoded request on a bound port with
+`link` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Link` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_link {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Link.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .link) (hx : Domain.link ∈ b.exposed)
+    (hr : Run.Link.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with link := (Run.Link.handle h (world s) cx s.link r).1 },
+       (Run.Link.handle h (world s) cx s.link r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-VALUE over the composed machine: a decoded request on a bound port with
+`value` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Value` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_value {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Value.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .value) (hx : Domain.value ∈ b.exposed)
+    (hr : Run.Value.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with value := (Run.Value.handle h (world s) cx s.value r).1 },
+       (Run.Value.handle h (world s) cx s.value r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-CVM over the composed machine: a decoded request on a bound port with
+`cvm` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Cvm` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_cvm {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Cvm.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .cvm) (hx : Domain.cvm ∈ b.exposed)
+    (hr : Run.Cvm.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with cvm := (Run.Cvm.handle h (world s) cx s.cvm r).1 },
+       (Run.Cvm.handle h (world s) cx s.cvm r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
+/-- NAP-POW over the composed machine: a decoded request on a bound port with
+`pow` exposed changes only the component's state and emits exactly its `handle`
+effects, so every `Run.Pow` theorem about `handle` holds of `Runtime.step`. -/
+theorem message_pow {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
+    {env : Envelope} {b : Binding} {r : Run.Pow.Req} (he : envOf? j = some env)
+    (hb : s.shell.bindings p = some b) (hd : env.domain? = some .pow) (hx : Domain.pow ∈ b.exposed)
+    (hr : Run.Pow.decode j = .ok r) :
+    let cx := Ctx.ofBinding p b (s.inst b.window)
+    step h cfg s (.message p j) =
+      ({ s with pow := (Run.Pow.handle h (world s) cx s.pow r).1 },
+       (Run.Pow.handle h (world s) cx s.pow r).2.map ofEff) := by
+  rw [message_dispatch he hb hd hx]
+  simp [napStep, lift, hr]
+
+
 /-- Every endpoint context a component sees (the only source of the sender's identity)
 came from verified artifact bytes, and its domains are exactly the policy exposure
 (NIP-5D §Identity; lifts `dispatch_sender_verified`). -/

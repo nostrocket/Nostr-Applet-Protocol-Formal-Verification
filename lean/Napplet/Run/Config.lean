@@ -590,7 +590,10 @@ def handle (_h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
   | .registerSchema id schema version =>
     let sc := scopeOf cx
     match register schema version (s.schemas sc) with
-    | .error (c, m) => (s, [.send cx.port (resultErr id c m)])
+    | .error (c, m) =>
+      -- NAP-CONFIG §API: "The shell pushes `config.schemaError` messages when it rejects a
+      -- `registerSchema` call"; the correlated result carries the same code and error.
+      (s, [.send cx.port (resultErr id c m), .send cx.port (schemaErrorMsg c m)])
     | .ok reg =>
       let s' := { s with schemas := upd s.schemas sc (some reg),
                          values := upd s.values sc ((s.values sc).map (pruneRoot reg.props)) }
@@ -856,8 +859,10 @@ theorem handle_values_valid (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req)
   | registerSchema rid schema version =>
     simp only [handle] at hm ⊢
     split at hm
-    · simp only [List.mem_singleton, Eff.send.injEq] at hm
-      exact absurd hm.2 (by simp [valuesMsg, resultErr, Json.msg, Json.mkObj])
+    · simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false, Eff.send.injEq] at hm
+      rcases hm with hm | hm
+      · exact absurd hm.2 (by simp [valuesMsg, resultErr, Json.msg, Json.mkObj])
+      · exact absurd hm.2 (by cases id <;> simp [valuesMsg, schemaErrorMsg, Json.msg, Json.mkObj])
     · rcases List.mem_cons.mp hm with hm | hm
       · simp only [Eff.send.injEq] at hm
         exact absurd hm.2 (by cases id <;> simp [valuesMsg, resultOk, Json.msg, Json.mkObj])
@@ -1000,6 +1005,14 @@ def one (es : List Eff) (expected : String) : Bool :=
   | [m] => Json.same m (Json.parse! expected)
   | _ => false
 
+/-- A rejected registration: the correlated result, then the `config.schemaError` push
+with the same code and error. -/
+def two (es : List Eff) (expected : String) : Bool :=
+  match sentTo 5 es with
+  | [m, e] => Json.same m (Json.parse! expected) &&
+      Json.same e (Json.msg "config.schemaError" [("error", m.get? "error"), ("code", m.get? "code")])
+  | _ => false
+
 def dec? (j : Json) : Option Req :=
   match decode j with
   | .ok r => some r
@@ -1024,7 +1037,7 @@ def r2 := "{ \"type\": \"config.registerSchema\", \"id\": \"r2\", \"schema\": { 
 -- Register schema (success) and (rejection)
 def reg1 := run (Json.parse! r1)
 #guard one reg1.2 "{ \"type\": \"config.registerSchema.result\", \"id\": \"r1\", \"ok\": true }"
-#guard one (run (Json.parse! r2)).2 "{ \"type\": \"config.registerSchema.result\", \"id\": \"r2\", \"ok\": false, \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }"
+#guard two (run (Json.parse! r2)).2 "{ \"type\": \"config.registerSchema.result\", \"id\": \"r2\", \"ok\": false, \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }"
 
 -- Get values
 #guard one (run (Json.parse! "{ \"type\": \"config.get\", \"id\": \"g1\" }") reg1.1).2
@@ -1057,13 +1070,13 @@ def withSection := run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id
   | _ => false
 
 -- Schema errors
-#guard one (run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id\": \"e1\", \"schema\": { \"type\": \"string\" } }")).2
+#guard two (run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id\": \"e1\", \"schema\": { \"type\": \"string\" } }")).2
   "{ \"type\": \"config.registerSchema.result\", \"id\": \"e1\", \"ok\": false, \"code\": \"invalid-schema\", \"error\": \"schema root must be of type `object`\" }"
 #guard one (run (Json.parse! "{ \"type\": \"config.get\", \"id\": \"g0\" }")).2
   "{ \"type\": \"config.schemaError\", \"code\": \"no-schema\", \"error\": \"no configuration schema is registered\" }"
 def codeOf (es : List Eff) : Option String :=
   match sentTo 5 es with
-  | [m] => m.getStr? "code"
+  | m :: _ => m.getStr? "code"
   | _ => none
 def regCode (schema : String) : Option String :=
   codeOf (run (Json.parse! ("{ \"type\": \"config.registerSchema\", \"id\": \"e\", \"schema\": " ++ schema ++ " }"))).2
