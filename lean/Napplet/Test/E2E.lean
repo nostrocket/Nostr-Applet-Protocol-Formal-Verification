@@ -335,4 +335,59 @@ def sMined := Runtime.step testHost testCfg sMine.1 (.reply ⟨.pow, 1⟩ (.json
 #guard sendsAre 7 (post sMine.1 7 "{ \"type\": \"pow.mine\", \"id\": \"m2\", \"jobId\": \"job-1\", \"template\": { \"kind\": 1, \"content\": \"gm\" }, \"target\": 21 }").2
   ["{ \"type\": \"pow.mine.result\", \"id\": \"m2\", \"jobId\": \"job-1\", \"accepted\": false, \"state\": \"error\", \"error\": \"duplicate jobId\" }"]
 
+/-! ### Remaining upstream response examples, verbatim -/
+
+-- NAP-STORAGE
+def sDark := (post s1 7 "{ \"type\": \"storage.set\", \"id\": \"b1\", \"key\": \"theme\", \"value\": \"dark\" }").1
+#guard sendsAre 7 (post sDark 7 "{ \"type\": \"storage.get\", \"id\": \"a1\", \"key\": \"theme\" }").2
+  ["{ \"type\": \"storage.get.result\", \"id\": \"a1\", \"value\": \"dark\" }"]
+def sLang := (post sDark 7 "{ \"type\": \"storage.set\", \"id\": \"b3\", \"key\": \"language\", \"value\": \"en\" }").1
+#guard match sentTo 7 (post sLang 7 "{ \"type\": \"storage.keys\", \"id\": \"d4\" }").2 with
+  | [m] => Json.same m (Json.parse! "{ \"type\": \"storage.keys.result\", \"id\": \"d4\", \"keys\": [\"language\", \"theme\"] }") ||
+           Json.same m (Json.parse! "{ \"type\": \"storage.keys.result\", \"id\": \"d4\", \"keys\": [\"theme\", \"language\"] }")
+  | _ => false
+def tinyCfg : Config := { testCfg with storageQuota := 8 }
+def sTiny : RtState := (runAll testHost tinyCfg (.init tinyCfg) (bootInputs 1 7 "my-napplet" [1])).1
+#guard sendsAre 7 (Runtime.step testHost tinyCfg sTiny (.message 7 (Json.parse! "{ \"type\": \"storage.set\", \"id\": \"b2\", \"key\": \"theme\", \"value\": \"light\" }"))).2
+  ["{ \"type\": \"storage.set.result\", \"id\": \"b2\", \"error\": \"quota exceeded\" }"]
+
+-- NAP-THEME
+def themeFull : String := "{ \"colors\": { \"background\": \"#1a1a2e\", \"text\": \"#e0e0e0\", \"primary\": \"#6c3ce0\" }, \"fonts\": { \"body\": { \"name\": \"Inter\", \"url\": \"https://example.com/inter.woff2\" }, \"title\": { \"name\": \"Playfair Display\", \"url\": \"https://example.com/playfair.woff2\" } }, \"background\": { \"url\": \"https://example.com/bg.jpg\", \"mode\": \"cover\", \"mime\": \"image/jpeg\" }, \"title\": \"MK Dark Theme\" }"
+def sTFull := (Runtime.step testHost testCfg s1 (.event (.themeChanged (some (Json.parse! themeFull))))).1
+#guard sendsAre 7 (post sTFull 7 "{ \"type\": \"theme.get\", \"id\": \"t1\" }").2
+  ["{ \"type\": \"theme.get.result\", \"id\": \"t1\", \"theme\": " ++ themeFull ++ " }"]
+#guard sendsAre 7 (post sTheme.1 7 "{ \"type\": \"theme.get\", \"id\": \"t2\" }").2
+  ["{ \"type\": \"theme.get.result\", \"id\": \"t2\", \"theme\": { \"colors\": { \"background\": \"#ffffff\", \"text\": \"#333333\", \"primary\": \"#0066cc\" } } }"]
+def ghDark : String := "{ \"colors\": { \"background\": \"#0d1117\", \"text\": \"#c9d1d9\", \"primary\": \"#58a6ff\" }, \"title\": \"GitHub Dark\" }"
+#guard sendsAre 7 (Runtime.step testHost testCfg s1 (.event (.themeChanged (some (Json.parse! ghDark))))).2
+  ["{ \"type\": \"theme.changed\", \"theme\": " ++ ghDark ++ " }"]
+
+-- NAP-IDENTITY
+def sAb := Runtime.step testHost testCfg s1 (.event (.userChanged "ab12cd..."))
+#guard sendsAre 7 sAb.2 ["{ \"type\": \"identity.changed\", \"pubkey\": \"ab12cd...\" }"]
+#guard sendsAre 7 (post sAb.1 7 "{ \"type\": \"identity.getPublicKey\", \"id\": \"q1\" }").2
+  ["{ \"type\": \"identity.getPublicKey.result\", \"id\": \"q1\", \"pubkey\": \"ab12cd...\" }"]
+#guard sendsAre 7 (Runtime.step testHost testCfg sAb.1 (.event (.userChanged ""))).2
+  ["{ \"type\": \"identity.changed\", \"pubkey\": \"\" }"]
+
+/-- Ask, answer with the host's JSON, return what the napplet receives. -/
+def ask (req answer : String) : List Runtime.Output :=
+  let r := post sAb.1 7 req
+  (Runtime.step testHost testCfg r.1 (.reply (((calls r.2).head?.map (·.1)).getD ⟨.identity, 99⟩) (.json (Json.parse! answer)))).2
+
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getProfile\", \"id\": \"q2\" }" "{ \"profile\": { \"name\": \"Alice\", \"about\": \"Nostr dev\", \"picture\": \"https://...\" } }")
+  ["{ \"type\": \"identity.getProfile.result\", \"id\": \"q2\", \"profile\": { \"name\": \"Alice\", \"about\": \"Nostr dev\", \"picture\": \"https://...\" } }"]
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getProfile\", \"id\": \"q3\" }" "{ \"profile\": null }")
+  ["{ \"type\": \"identity.getProfile.result\", \"id\": \"q3\", \"profile\": null }"]
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getRelays\", \"id\": \"q5\" }" "{ \"relays\": { \"wss://relay.example.com\": { \"read\": true, \"write\": true }, \"wss://readonly.example.com\": { \"read\": true, \"write\": false } } }")
+  ["{ \"type\": \"identity.getRelays.result\", \"id\": \"q5\", \"relays\": { \"wss://relay.example.com\": { \"read\": true, \"write\": true }, \"wss://readonly.example.com\": { \"read\": true, \"write\": false } } }"]
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getList\", \"id\": \"q6\", \"listType\": \"bookmarks\" }" "{ \"entries\": [\"note1abc...\", \"note1def...\"] }")
+  ["{ \"type\": \"identity.getList.result\", \"id\": \"q6\", \"entries\": [\"note1abc...\", \"note1def...\"] }"]
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getMutes\", \"id\": \"q7\" }" "{ \"pubkeys\": [\"spam1...\", \"spam2...\"] }")
+  ["{ \"type\": \"identity.getMutes.result\", \"id\": \"q7\", \"pubkeys\": [\"spam1...\", \"spam2...\"] }"]
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getZaps\", \"id\": \"q8\" }" "{ \"zaps\": [{ \"eventId\": \"ev1...\", \"sender\": \"ab12...\", \"amount\": 21000, \"content\": \"Great post!\" }] }")
+  ["{ \"type\": \"identity.getZaps.result\", \"id\": \"q8\", \"zaps\": [{ \"eventId\": \"ev1...\", \"sender\": \"ab12...\", \"amount\": 21000, \"content\": \"Great post!\" }] }"]
+#guard sendsAre 7 (ask "{ \"type\": \"identity.getBadges\", \"id\": \"q9\" }" "{ \"badges\": [{ \"id\": \"badge1...\", \"name\": \"Early Adopter\", \"awardedBy\": \"cd34...\" }] }")
+  ["{ \"type\": \"identity.getBadges.result\", \"id\": \"q9\", \"badges\": [{ \"id\": \"badge1...\", \"name\": \"Early Adopter\", \"awardedBy\": \"cd34...\" }] }"]
+
 end Napplet.Test

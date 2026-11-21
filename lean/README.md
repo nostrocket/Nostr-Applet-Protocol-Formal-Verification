@@ -15,7 +15,24 @@ but the model was built from the upstream texts at the commits listed below.
 - Coverage against upstream: every one of the 177 type strings in the 19 NAP wire
   tables is decoded or produced by its component; all 91 JSON request examples in the
   NAP specs decode (`Napplet/Test/UpstreamExamples.lean`); `Napplet/Test/E2E.lean`
-  feeds upstream example JSON for every NAP through `Runtime.step`.
+  feeds upstream example JSON for every NAP through `Runtime.step`. Of the 118 JSON
+  response examples in the NAP specs, 111 are reproduced verbatim by guards
+  (`scripts/response_coverage.py` finds 109; it misses the two THEME examples, whose
+  guards build the JSON by concatenation). The other 7 cannot be produced verbatim,
+  and each is reproduced in substance:
+  - INC (2): `c-abc` and `endpoint-music-controller` are illustrative ids; the
+    runtime assigns `c-<n>` and `endpoint-<window>`. The same messages with runtime
+    ids are checked end to end.
+  - POW (2): checked in `Run/Pow.lean` against the upstream text with its `…`
+    placeholders, which the coverage script does not match.
+  - MEDIA (1): the rejected-create example carries `sessionId`, which contradicts
+    upstream's prose ("the session was not created"); the model omits it.
+  - CONFIG (1): upstream shows a rejected schema as a `config.schemaError` push; the
+    model answers the correlated `config.registerSchema.result` (CONFIG decision) with
+    the same `code` and `error`.
+  - CVM (1): the registry is off by default (kehto does not implement it); with it on,
+    `Run/Cvm.lean` checks the example with 64-hex hashes in place of the abbreviated
+    ones.
 
 ```bash
 cd lean && lake build
