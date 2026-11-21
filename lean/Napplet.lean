@@ -34,4 +34,5 @@ import Napplet.Host
 import Napplet.Component
 import Napplet.Runtime
 import Napplet.Binding
+import Napplet.Nip19
 import Napplet.Test.E2E
