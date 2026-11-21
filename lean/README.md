@@ -12,6 +12,10 @@ but the model was built from the upstream texts at the commits listed below.
   `Quot.sound`). No `native_decide`.
 - Every definition is computable, so the model runs as a test oracle
   (`Napplet/Test/Harness.lean`).
+- Coverage against upstream: every one of the 177 type strings in the 19 NAP wire
+  tables is decoded or produced by its component; all 91 JSON request examples in the
+  NAP specs decode (`Napplet/Test/UpstreamExamples.lean`); `Napplet/Test/E2E.lean`
+  feeds upstream example JSON for every NAP through `Runtime.step`.
 
 ```bash
 cd lean && lake build
