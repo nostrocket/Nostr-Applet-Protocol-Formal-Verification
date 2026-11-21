@@ -1,0 +1,6 @@
+name = "napplet"
+version = "0.1.0"
+defaultTargets = ["Napplet"]
+
+[[lean_lib]]
+name = "Napplet"
