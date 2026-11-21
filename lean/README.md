@@ -1,8 +1,8 @@
 # Napplet protocol: Lean 4 model
 
 A machine-checked model of the NIP-5D core, the five NAPs merged to
-`napplet/naps` `master` (SHELL, INTENT, INC, THEME, IDENTITY), and three NAPs from
-open PR branches (STORAGE, RESOURCE, RELAY). Section numbers refer
+`napplet/naps` `master` (SHELL, INTENT, INC, THEME, IDENTITY), and six NAPs from
+open PR branches (STORAGE, RESOURCE, RELAY, OUTBOX, UPLOAD, VALUE). Section numbers refer
 to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md).
 
 - Lean `v4.36.0`, no Mathlib, no dependencies.
@@ -31,6 +31,9 @@ cd lean && lake build
 | `Nap.Storage` | §15.7 | `handle_isolated`: a request only touches the scope the runtime derived. `quota_preserved` (per-scope quota is an invariant), `keys_nodup_preserved`, `set_then_get`, `set_fail_unchanged`, `handle_same_id`. Scope separation: `shared_ne_instance`, `instances_isolated`, `bare_d_not_scope` (same `d`, different publisher, different scope), `artifact_hash_isolated`. |
 | `Nap.Resource` | §15.8 | `bytes_no_private_hop`: no delivery through a private, loopback, link-local, ULA, CGNAT or metadata address on any hop (SSRF). `bytes_redirects_capped`, `bytes_size_capped`. `bytes_mime_sniffed_not_svg`: MIME is sniffed from the delivered bytes, and raw SVG is never delivered. `blossom_hash_verified`, `http_disabled_by_default`, `unknown_scheme_unsupported`. `bytesMany_items`: results keep input order and length, and each URL is independent. `cancel_drops_late`, `at_most_one_terminal`. IP classification vectors. |
 | `Nap.Relay` | §15.6 | `broadcast_signed_by_shell`, `publish_requires_write`, `no_napplet_ciphertext_broadcast` (NIP-5D §Security 7), `publishEncrypted_shell_encrypts`. `delivery_plaintext` and `undecryptable_not_delivered`: napplets never see ciphertext. `delivery_only_matching_subscribers`, `subscribe_requires_read`, `close_stops_delivery`, `close_only_own`, `sidecar_default_off`, `sidecar_opt_out`, `publish_same_id`. |
+| `Nap.Outbox` | §15.9 | `publish_single_event`, `publish_signed_by_shell`, `publish_requires_write`. Fanout: `plan_nodup`, `plan_allowed` (napplet-named relays cannot bypass relay policy), `plan_includes_outbox`, `plan_includes_inboxes`, `missing_inbox_reported`, `fallback_not_for_inboxes`. Queries: `query_nodup`, `query_sound`, `query_verified`, `getEvent_matches`. |
+| `Nap.Upload` | §15.10 | `send_requires_policy`: bytes leave only after the rail, size, MIME and consent checks pass, to the shell-configured server. `send_auth_by_shell`. `complete_requires_confirmation` and `complete_hashes` (`sha256` covers the stored bytes; `originalSha256` appears exactly when transformed). `consent_latch`, `unsupported_rail_no_send`, `rejected_no_send`, `upload_same_id`. |
+| `Nap.Value` | §15.16 | `pay_requires_consent_or_allowance`, `pay_within_policy`, `settled_requires_proof`, `failure_not_success`, `zap_signed_by_shell`. Allowances: `allowance_other_napplets_untouched`, `allowance_no_overspend` (the pool shrinks by exactly the amount paid, or not at all). `quote_not_binding`, `send_same_id`. |
 | `Nap.Identity` | §15.5 | `handle_same_id`, `getPublicKey_no_error`, `change_notifies`, `signout_notifies`, `change_only_exposed`. Read-only by construction: `handle` returns no new state, and the request type has no signing or encryption operations. |
 
 ## Assumptions (not proved)
@@ -82,10 +85,28 @@ Each of these is a candidate clarification for the spec:
 13. **RESOURCE: duplicate in-flight request ids.** These are not covered by the
     spec. The model ignores the duplicate, so each accepted request gets exactly
     one terminal envelope.
+14. **OUTBOX: unresolved `toInboxes` authors.** The model still publishes to every
+    resolved relay. It lists unresolved authors in `missing` with
+    `"relay list unavailable"`, and never substitutes fallback relays for them.
+    The spec allows "include … or report failure" but does not say whether to
+    publish at all.
+15. **OUTBOX: own write set when NIP-65 is unavailable.** The model uses the
+    fallback relays. The spec permits this for the user's own write set only.
+16. **UPLOAD: MIME policy.** The model checks the shell's sniffed type, not the
+    napplet-supplied `mimeType`. The spec does not say which the policy uses.
+17. **UPLOAD: when consent is asked.** The model prompts on the first upload that
+    passes every other check, and remembers approval per napplet. The spec says
+    SHOULD and is otherwise silent.
+18. **VALUE: allowance debit timing.** The model debits a covering allowance when
+    it authorises the payment, before the backend replies, and does not refund a
+    failed payment. This is conservative: budget is never double-spent. Whether
+    failures should refund is unspecified.
+19. **VALUE: allowance and consent.** A covering allowance replaces the prompt.
+    Without one, the user is asked. A request no allowance covers is never
+    partially charged against one.
 
 ## Not modelled yet
 
-OUTBOX, UPLOAD, KEYS, MEDIA, NOTIFY, CONFIG, LINK, VALUE, CVM, POW and DISPLAY
-(all on open PR branches); RESOURCE's `hashtree`/`htree`/`nostr` scheme details and
+KEYS, MEDIA, NOTIFY, CONFIG, LINK, CVM, POW and DISPLAY (all on open PR branches); RESOURCE's `hashtree`/`htree`/`nostr` scheme details and
 canonical base64; message payload schemas beyond what the proofs need; NIP-19
 `naddr` decoding; and the deferred CLASS and CONNECT tracks.

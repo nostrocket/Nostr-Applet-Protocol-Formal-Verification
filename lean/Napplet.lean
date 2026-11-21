@@ -11,3 +11,6 @@ import Napplet.Nap.Identity
 import Napplet.Nap.Storage
 import Napplet.Nap.Resource
 import Napplet.Nap.Relay
+import Napplet.Nap.Outbox
+import Napplet.Nap.Upload
+import Napplet.Nap.Value
