@@ -136,8 +136,12 @@ def int (i : Int) : Json := .num (Num.ofInt i)
 def strs (xs : List String) : Json := .arr (xs.map .str)
 
 /-- Last member named `k` (browser `JSON.parse` semantics). -/
-def lookup (kvs : List (String × Json)) (k : String) : Option Json :=
-  kvs.foldl (fun acc p => if p.1 = k then some p.2 else acc) none
+def lookup : List (String × Json) → String → Option Json
+  | [], _ => none
+  | (k', v) :: rest, k =>
+    match lookup rest k with
+    | some x => some x
+    | none => if k' = k then some v else none
 
 def get? (j : Json) (k : String) : Option Json :=
   match j with
@@ -160,6 +164,76 @@ def mkObj (kvs : List (String × Option Json)) : Json :=
 /-- A NIP-5D envelope: `{"type": t, ...members}`. -/
 def msg (t : String) (kvs : List (String × Option Json)) : Json :=
   mkObj (("type", some (.str t)) :: kvs)
+
+/-! ### Typed accessors -/
+
+def asNat? : Json → Option Nat
+  | .num n => n.toNat?
+  | _ => none
+
+def asStr? : Json → Option String
+  | .str s => some s
+  | _ => none
+
+def asBool? : Json → Option Bool
+  | .bool b => some b
+  | _ => none
+
+def asArr? : Json → Option (List Json)
+  | .arr xs => some xs
+  | _ => none
+
+def asStrs? (j : Json) : Option (List String) := (j.asArr?).bind (·.mapM asStr?)
+
+def asTags? (j : Json) : Option (List (List String)) := (j.asArr?).bind (·.mapM asStrs?)
+
+def tags (ts : List (List String)) : Json := .arr (ts.map strs)
+
+theorem normalize_go_toNat (fuel : Nat) : ∀ (m e : Int), 0 ≤ m → 0 ≤ e →
+    (Num.normalize.go m e fuel).toNat? = some (m.toNat * 10 ^ e.toNat) := by
+  induction fuel with
+  | zero =>
+    intro m e hm he
+    have h1 : ¬ m < 0 := by omega
+    simp [Num.normalize.go, Num.toNat?, h1, he]
+  | succ f ih =>
+    intro m e hm he
+    simp only [Num.normalize.go]
+    split
+    · rename_i h0; subst h0; simp [Num.toNat?]
+    · split
+      · have hq : 0 ≤ m / 10 := Int.ediv_nonneg hm (by decide)
+        rw [ih (m / 10) (e + 1) hq (by omega)]
+        congr 1
+        have h1 : (e + 1).toNat = e.toNat + 1 := by omega
+        rw [h1, Nat.pow_succ]
+        have h2 : (m / 10).toNat * 10 = m.toNat := by omega
+        rw [← h2, Nat.mul_comm (10 ^ _) 10, Nat.mul_assoc]
+      · have h1 : ¬ m < 0 := by omega
+        simp [Num.toNat?, h1, he]
+
+@[simp] theorem asNat?_nat (n : Nat) : asNat? (nat n) = some n := by
+  simp only [asNat?, nat, Num.ofNat, Num.ofInt, Num.normalize]
+  rw [normalize_go_toNat _ _ _ (by omega) (by decide)]
+  simp
+
+@[simp] theorem asStr?_str (s : String) : asStr? (.str s) = some s := rfl
+@[simp] theorem asBool?_bool (b : Bool) : asBool? (.bool b) = some b := rfl
+
+@[simp] theorem asStrs?_strs (xs : List String) : asStrs? (strs xs) = some xs := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [asStrs?, strs, asArr?, Option.bind_some, List.map_cons, List.mapM_cons,
+      asStr?] at ih ⊢
+    simp [ih]
+
+@[simp] theorem asTags?_tags (ts : List (List String)) : asTags? (tags ts) = some ts := by
+  induction ts with
+  | nil => rfl
+  | cons t ts ih =>
+    simp only [asTags?, tags, asArr?, Option.bind_some, List.map_cons, List.mapM_cons] at ih ⊢
+    simp [ih]
 
 /-! ### Canonical form -/
 

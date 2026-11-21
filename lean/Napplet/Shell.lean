@@ -697,4 +697,123 @@ theorem binding_unique_window {c : Crypto} {cfg : ShellConfig} {s : ShellState}
   simp at b
   exact b.1
 
+/-! ## Binding changes per step (used by the composed runtime) -/
+
+section binding_changes
+variable {c : Crypto} {cfg : ShellConfig} {s : ShellState}
+
+/-- A NAP envelope never changes shell state. -/
+theorem step_nap_state (p : PortId) (env : Envelope) : (step c cfg s (.nap p env)).1 = s := by
+  simp only [step]
+  split
+  · split
+    · split <;> rfl
+    · rfl
+  · rfl
+
+theorem revoke_unbind {w : WindowId} {q : PortId} (h : (revoke s w).1.bindings q = none) :
+    s.bindings q = none ∨ Output.closePort q ∈ (revoke s w).2 := by
+  unfold revoke at h ⊢
+  split at h
+  · rename_i id ex p ld hf
+    simp only [upd] at h
+    split at h
+    · rename_i hq; subst hq; simp
+    · exact .inl h
+  · exact .inl h
+  · exact .inl h
+
+/-- A port loses its binding only with an explicit `closePort` for it. -/
+theorem step_unbind (e : Event) {q : PortId} (h : (step c cfg s e).1.bindings q = none) :
+    s.bindings q = none ∨ Output.closePort q ∈ (step c cfg s e).2 := by
+  revert h
+  cases e with
+  | create w m bytes =>
+    simp only [step]; split
+    · exact .inl
+    · split <;> exact .inl
+  | load w =>
+    simp only [step]; split
+    · exact .inl
+    · exact revoke_unbind
+    · exact .inl
+  | hello w ports =>
+    simp only [step]; split
+    · split
+      · split
+        · intro h; simp only [upd] at h
+          split at h
+          · simp at h
+          · exact .inl h
+        · exact .inl
+      · exact .inl
+    · exact revoke_unbind
+    · exact .inl
+  | windowMsg w =>
+    simp only [step]; split
+    · exact revoke_unbind
+    · exact .inl
+  | portClosed p =>
+    simp only [step]; split
+    · exact revoke_unbind
+    · exact .inl
+  | nap p env => intro h; exact .inl (by rw [step_nap_state] at h; exact h)
+  | grant p g =>
+    simp only [step]; split <;> exact .inl
+
+theorem revoke_bind {w : WindowId} {q : PortId} {b : Binding}
+    (h : (revoke s w).1.bindings q = some b) : s.bindings q = some b := by
+  unfold revoke at h
+  split at h
+  · simp only [upd] at h
+    split at h
+    · simp at h
+    · exact h
+  · exact h
+  · exact h
+
+/-- A port gains a binding only with a `bound` output for it. -/
+theorem step_bind (e : Event) {q : PortId} {b : Binding}
+    (h : (step c cfg s e).1.bindings q = some b) :
+    s.bindings q = some b ∨ ∃ w id, Output.bound w q id ∈ (step c cfg s e).2 := by
+  revert h
+  cases e with
+  | create w m bytes =>
+    simp only [step]; split
+    · exact .inl
+    · split <;> exact .inl
+  | load w =>
+    simp only [step]; split
+    · exact .inl
+    · intro h; exact .inl (revoke_bind h)
+    · exact .inl
+  | hello w ports =>
+    simp only [step]; split
+    · rename_i id ex ld hf
+      split
+      · rename_i p
+        split
+        · intro h
+          simp only [upd] at h
+          split at h
+          · rename_i hq; subst hq; exact .inr ⟨w, id, by simp⟩
+          · exact .inl h
+        · exact .inl
+      · exact .inl
+    · intro h; exact .inl (revoke_bind h)
+    · exact .inl
+  | windowMsg w =>
+    simp only [step]; split
+    · intro h; exact .inl (revoke_bind h)
+    · exact .inl
+  | portClosed p =>
+    simp only [step]; split
+    · intro h; exact .inl (revoke_bind h)
+    · exact .inl
+  | nap p env => intro h; exact .inl (by rw [step_nap_state] at h; exact h)
+  | grant p g =>
+    simp only [step]; split <;> exact .inl
+
+end binding_changes
+
 end Napplet

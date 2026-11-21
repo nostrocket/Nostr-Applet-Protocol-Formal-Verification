@@ -29,3 +29,7 @@ import Napplet.Nap.Pow
 import Napplet.Nap.Config
 import Napplet.Nap.Media
 import Napplet.Nap.Cvm
+import Napplet.Event
+import Napplet.Host
+import Napplet.Component
+import Napplet.Runtime
