@@ -45,7 +45,8 @@ def allDomains : List Domain :=
 def testCfg : Config :=
   { shell := { supported := allDomains, policy := fun _ => allDomains }
     displayCfg := { devices := [{ id := "desk", width := 800, height := 480, type := .eink }],
-                    permitted := fun _ _ => true } }
+                    permitted := fun _ _ => true }
+    uploadCfg := Run.Upload.sampleCfg }
 
 def publisher : Pubkey := hexOf 0xabc
 
@@ -81,6 +82,11 @@ def sendsAre (p : PortId) (os : List Runtime.Output) (expected : List String) : 
 /-- Feed one JSON text on port `p`. -/
 def post (s : RtState) (p : PortId) (text : String) : RtState × List Runtime.Output :=
   Runtime.step testHost testCfg s (.message p (Json.parse! text))
+
+/-- Sign an unsigned event the way the host's signer contract says (test id and sig). -/
+def signAs (u : UnsignedEvent) : NostrEvent :=
+  { id := "evid", pubkey := u.pubkey, createdAt := u.createdAt, kind := u.kind, tags := u.tags,
+    content := u.content, sig := "sig" }
 
 def calls (os : List Runtime.Output) : List (CallTag × Call) :=
   os.filterMap fun o => match o with | .call t c => some (t, c) | _ => none

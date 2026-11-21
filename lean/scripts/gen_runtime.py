@@ -17,6 +17,9 @@ COMPS = [
     ("Outbox", "outbox", "outbox", "outboxCfg", "Run.Outbox.St.init cfg.outboxCfg"),
     ("Media", "media", "media", "mediaCfg", "Run.Media.St.init cfg.mediaCfg"),
     ("Config", "config", "config", None, "Run.Config.St.init"),
+    ("Resource", "resource", "resource", "resourceCfg", "Run.Resource.St.init cfg.resourceCfg"),
+    ("Upload", "upload", "upload", "uploadCfg", "Run.Upload.St.init cfg.uploadCfg"),
+    ("Link", "link", "link", "linkCfg", "Run.Link.St.init cfg.linkCfg"),
 ]
 extra = sys.argv[1:]  # e.g. Relay:relay:relay:relayCfg
 for e in extra:

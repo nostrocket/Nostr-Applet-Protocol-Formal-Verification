@@ -244,4 +244,64 @@ def sCSub := post sReg.1 7 "{ \"type\": \"config.subscribe\" }"
 #guard sendsAre 7 (post s1 7 "{ \"type\": \"config.registerSchema\", \"id\": \"r2\", \"schema\": { \"type\": \"object\", \"properties\": { \"username\": { \"type\": \"string\", \"pattern\": \"^[a-z]+$\" } } } }").2
   ["{ \"type\": \"config.registerSchema.result\", \"id\": \"r2\", \"ok\": false, \"code\": \"pattern-not-allowed\", \"error\": \"JSON Schema `pattern` keyword is not permitted in the Core Subset\" }"]
 
+/-! ### NAP-RESOURCE -/
+
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"resource.bytes\", \"id\": \"r1\", \"url\": \"data:application/octet-stream;base64,AAEC/w==\" }").2
+  ["{ \"type\": \"resource.bytes.result\", \"id\": \"r1\", \"blob\": \"AAEC/w==\", \"mime\": \"application/octet-stream\" }"]
+def sFetch := post s1 7 "{ \"type\": \"resource.bytes\", \"id\": \"r2\", \"url\": \"https://example.com/a.bin\" }"
+#guard (calls sFetch.2) == [(⟨.resource, 0⟩, .fetch "https://example.com/a.bin")]
+#guard sendsAre 7 (Runtime.step testHost testCfg sFetch.1
+    (.reply ⟨.resource, 0⟩ (.fetched ⟨[.v4 93 184 216 34], some [0, 1, 2, 255], false, "text/html"⟩))).2
+  ["{ \"type\": \"resource.bytes.result\", \"id\": \"r2\", \"blob\": \"AAEC/w==\", \"mime\": \"application/octet-stream\" }"]
+-- a redirect through the metadata address is blocked
+#guard sendsAre 7 (Runtime.step testHost testCfg sFetch.1
+    (.reply ⟨.resource, 0⟩ (.fetched ⟨[.v4 93 184 216 34, .v4 169 254 169 254], some [0], false, ""⟩))).2
+  ["{ \"type\": \"resource.bytes.error\", \"id\": \"r2\", \"error\": \"blocked-by-policy\" }"]
+-- cancelled: the late reply is dropped
+#guard (sentTo 7 (runAll testHost testCfg sFetch.1
+    [.message 7 (Json.parse! "{ \"type\": \"resource.cancel\", \"id\": \"r2\" }"),
+     .reply ⟨.resource, 0⟩ (.fetched ⟨[.v4 93 184 216 34], some [0], false, ""⟩)]).2).isEmpty
+
+/-! ### NAP-UPLOAD -/
+
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"upload.info\", \"id\": \"i1\" }").2
+  ["{ \"type\": \"upload.info.result\", \"id\": \"i1\", \"info\": { \"rails\": [ { \"rail\": \"nip96\", \"enabled\": true, \"returns\": [\"https\"] }, { \"rail\": \"blossom\", \"enabled\": true, \"returns\": [\"https\", \"blossom\"] } ], \"maxBytes\": 104857600, \"mimeTypes\": [\"image/png\", \"image/jpeg\", \"application/pdf\"] } }"]
+
+def firstTag (os : List Runtime.Output) : CallTag :=
+  ((calls os).head?.map (·.1)).getD ⟨.upload, 999⟩
+
+-- First upload: consent prompt, then the shell signs NIP-98 auth, then the server stores.
+def sUp0 := post sU 7 "{ \"type\": \"upload.upload\", \"id\": \"u1\", \"request\": { \"rail\": \"nip96\", \"data\": [137, 80, 78, 71], \"mimeType\": \"image/png\", \"filename\": \"photo.png\" } }"
+#guard match calls sUp0.2 with | [(_, .prompt .upload "upload" _)] => true | _ => false
+def sUp1 := Runtime.step testHost testCfg sUp0.1 (.reply (firstTag sUp0.2) (.decision true none))
+#guard match calls sUp1.2 with | [(_, .sign u)] => u.kind == 27235 | _ => false
+def sUp2 := match calls sUp1.2 with
+  | [(t, .sign u)] => Runtime.step testHost testCfg sUp1.1 (.reply t (.signed (some (signAs u))))
+  | _ => (sUp1.1, [])
+#guard match calls sUp2.2 with | [(_, .nap .upload "put" _)] => true | _ => false
+def shaUp : String := fakeHash [137, 80, 78, 71]
+def sUp3 := match calls sUp2.2 with
+  | [(t, _)] => Runtime.step testHost testCfg sUp2.1 (.reply t (.json (Json.parse!
+      ("{\"ok\":true,\"url\":\"https://files.example.com/abc123.png\",\"sha256\":\"" ++ shaUp ++ "\",\"size\":4,\"mimeType\":\"image/png\"}"))))
+  | _ => (sUp2.1, [])
+#guard match sentTo 7 sUp3.2 with
+  | [m] => (m.get? "result" |>.bind (·.getStr? "status")) == some "complete" &&
+           (m.get? "result" |>.bind (·.getStr? "url")) == some "https://files.example.com/abc123.png" &&
+           m.getStr? "id" == some "u1"
+  | _ => false
+-- refused consent: nothing leaves the shell
+#guard (calls (Runtime.step testHost testCfg sUp0.1 (.reply (firstTag sUp0.2) (.decision false none))).2).isEmpty
+
+/-! ### NAP-LINK -/
+
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"link.open\", \"id\": \"l2\", \"url\": \"file:///etc/passwd\" }").2
+  ["{ \"type\": \"link.open.result\", \"id\": \"l2\", \"status\": \"denied\", \"error\": \"unsupported-scheme\" }"]
+def sLink := post s1 7 "{ \"type\": \"link.open\", \"id\": \"l1\", \"url\": \"https://example.com/post/123\", \"options\": { \"label\": \"Read the post\" } }"
+#guard (calls sLink.2).length == 1
+def sLinkOk := Runtime.step testHost testCfg sLink.1 (.reply ⟨.link, 0⟩ (.decision true none))
+#guard sendsAre 7 sLinkOk.2 ["{ \"type\": \"link.open.result\", \"id\": \"l1\", \"status\": \"opened\" }"]
+#guard sLinkOk.2.contains (.effect (.nap .link "open" (Json.parse! "{\"url\":\"https://example.com/post/123\"}")))
+#guard sendsAre 7 (Runtime.step testHost testCfg sLink.1 (.reply ⟨.link, 0⟩ (.decision false none))).2
+  ["{ \"type\": \"link.open.result\", \"id\": \"l1\", \"status\": \"denied\", \"error\": \"user-denied\" }"]
+
 end Napplet.Test
