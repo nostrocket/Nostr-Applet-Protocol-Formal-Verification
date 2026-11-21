@@ -38,3 +38,4 @@ import Napplet.Nip19
 import Napplet.BindingUri
 import Napplet.BindingApi
 import Napplet.Test.E2E
+import Napplet.Test.UpstreamExamples
