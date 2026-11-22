@@ -227,12 +227,14 @@ def boundPorts : List Napplet.Output → List PortId
   | .bound _ p _ :: os => p :: boundPorts os
   | _ :: os => boundPorts os
 
+/-- Windows a shell step removed or refused to create. -/
 def removedFrames : List Napplet.Output → List WindowId
   | [] => []
   | .removeFrame w :: os => w :: removedFrames os
+  | .rejected w _ :: os => w :: removedFrames os
   | _ :: os => removedFrames os
 
-/-- Forget the instance ids of removed frames (modelling decision 53). -/
+/-- Forget the instance ids of removed and rejected frames (modelling decision 53). -/
 def clearInst (f : WindowId → Nat) : List WindowId → WindowId → Nat
   | [] => f
   | w :: ws => clearInst (upd f w 0) ws
