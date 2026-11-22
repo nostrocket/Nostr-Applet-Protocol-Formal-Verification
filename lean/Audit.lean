@@ -178,3 +178,7 @@ open Napplet
 #print axioms Srcdoc.csp_first
 #print axioms Srcdoc.buildSrcdoc_bytes
 #print axioms Srcdoc.step_app
+#print axioms Srcdoc.parse_order
+#print axioms Srcdoc.bootstrap_first
+#print axioms Srcdoc.scriptData_safe
+#print axioms Bootstrap.srcdoc_order

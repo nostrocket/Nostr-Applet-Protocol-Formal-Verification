@@ -189,13 +189,16 @@ def step : Code → Option (Tok × Code × Code)
     else if c = 60 then let (t, x, y) := lt r; some (t, 60 :: x, y)
     else some (.text, [c], r)
 
-/-- The first `n` tokens. -/
-def lexN : Nat → Code → List Tok
-  | 0, _ => []
+/-- The first `n` tokens and the bytes after them. -/
+def lexR : Nat → Code → List Tok × Code
+  | 0, z => ([], z)
   | n + 1, z =>
     match step z with
-    | none => []
-    | some (t, _, r) => t :: lexN n r
+    | none => ([], z)
+    | some (t, _, r) => let (ts, w) := lexR n r; (t :: ts, w)
+
+/-- The first `n` tokens. -/
+def lexN (n : Nat) (z : Code) : List Tok := (lexR n z).1
 
 /-- Tokens that create no element before `<head>`. -/
 def Tok.allowed : Tok → Bool
@@ -507,9 +510,13 @@ theorem lex_script (w : Code) :
   rw [hn] at this
   exact this
 
+theorem lexR_step {k : Nat} {z c r : Code} {t : Tok} (h : step z = some (t, c, r)) :
+    lexR (k + 1) z = (t :: (lexR k r).1, (lexR k r).2) := by
+  simp [lexR, h]
+
 theorem lexN_step {k : Nat} {z c r : Code} {t : Tok} (h : step z = some (t, c, r)) :
     lexN (k + 1) z = t :: lexN k r := by
-  simp [lexN, h]
+  simp [lexN, lexR_step h]
 
 theorem label_ne_ws (w : Code) : label w ≠ .ws := by
   unfold label; split <;> (try split) <;> simp
@@ -549,7 +556,7 @@ theorem split_lex : ∀ (n : Nat) (z x : Code), (∀ b ∈ x.head?, isWs b = fal
     let r := split n z
     (r.2.2.2 = true → ∃ ts h, r.1 = ts ++ [h] ∧ h.isHead = true ∧ ∀ t ∈ ts, t.allowed = true) ∧
     (r.2.2.2 = false → ∀ t ∈ r.1, t.allowed = true) ∧
-    ∀ m, lexN (r.1.length + m) (r.2.1 ++ x) = r.1 ++ lexN m x
+    ∀ m, lexR (r.1.length + m) (r.2.1 ++ x) = (r.1 ++ (lexR m x).1, (lexR m x).2)
   | 0, z, x, _ => by simp [split]
   | n + 1, z, x, hx => by
     simp only [split]
@@ -562,7 +569,7 @@ theorem split_lex : ∀ (n : Nat) (z x : Code), (∀ b ∈ x.head?, isWs b = fal
         have hst := (step_app hs hne htx x (fun h => by subst h; simp [Tok.isHead] at hh)).2.2
         refine ⟨fun _ => ⟨[], t, rfl, hh, by simp⟩, fun h => by simp at h, fun m => ?_⟩
         simp only [List.length_singleton, List.singleton_append]
-        rw [Nat.add_comm, lexN_step hst]
+        rw [Nat.add_comm, lexR_step hst]
       · split
         · rename_i hn ha
           obtain ⟨hne, htx⟩ := allowed_ne (.inl ha)
@@ -591,47 +598,146 @@ theorem split_lex : ∀ (n : Nat) (z x : Code), (∀ b ∈ x.head?, isWs b = fal
             · exact ha
             · exact ih2 hf t' ht'
           · simp only [List.length_cons, List.cons_append, List.append_assoc]
-            rw [show ts.length + 1 + m = (ts.length + m) + 1 by omega, lexN_step hst, ih3 m]
+            rw [show ts.length + 1 + m = (ts.length + m) + 1 by omega, lexR_step hst, ih3 m]
         · simp
 
 /-- **Parse order.** The first tokens of the `srcdoc` are napplet tokens that create no
 element, then a `<head>` start tag (the napplet's or the injected one), then the CSP
-`<meta>`, then the bootstrap `<script>` start tag. -/
-theorem csp_first (z : Code) (csp boot : String) :
-    ∃ ts h, (∀ t ∈ ts, t.allowed = true) ∧ h.isHead = true ∧
-      lexN (ts.length + 3) (buildCodes z csp boot) =
-        ts ++ [h, .startTag (ascii "meta") (cspMeta csp), .startTag (ascii "script") scriptOpen] := by
+`<meta>`, then the bootstrap `<script>` start tag; after them come exactly the bootstrap
+text, the injected `</script>`, and the rest of the napplet's bytes. -/
+theorem parse_order (z : Code) (csp boot : String) :
+    ∃ ts h p q, (∀ t ∈ ts, t.allowed = true) ∧ h.isHead = true ∧ stripBom z = p ++ q ∧
+      lexR (ts.length + 3) (buildCodes z csp boot) =
+        (ts ++ [h, .startTag (ascii "meta") (cspMeta csp), .startTag (ascii "script") scriptOpen],
+         codes boot ++ scriptClose ++ q) := by
+  have hb := split_bytes ((stripBom z).length + 1) (stripBom z)
   simp only [buildCodes]
   have hl := split_lex ((stripBom z).length + 1) (stripBom z)
-  generalize split ((stripBom z).length + 1) (stripBom z) = res at hl ⊢
+  generalize split ((stripBom z).length + 1) (stripBom z) = res at hl hb ⊢
   obtain ⟨toks, p, q, f⟩ := res
   have hx : ∀ b ∈ (inject csp boot f ++ q).head?, isWs b = false := by
     cases f <;> simp [inject, headOpen, cspMeta, metaOpen, ascii, isWs]
   obtain ⟨h1, h2, h3⟩ := hl _ hx
-  simp only at h1 h2 h3
+  simp only at h1 h2 h3 hb
   rw [List.append_assoc]
   cases f with
   | true =>
     obtain ⟨ts, h, rfl, hh, hall⟩ := h1 rfl
-    refine ⟨ts, h, hall, hh, ?_⟩
+    refine ⟨ts, h, p, q, hall, hh, hb, ?_⟩
     have := h3 2
     simp only [List.length_append, List.length_singleton] at this
     rw [show ts.length + 3 = ts.length + 1 + 2 by omega, this]
     simp only [inject, List.nil_append, ↓reduceIte, List.append_assoc]
-    rw [lexN_step (lex_meta csp _), lexN_step (lex_script _)]
-    simp [lexN]
+    rw [lexR_step (lex_meta csp _), lexR_step (lex_script _)]
+    simp [lexR]
   | false =>
-    refine ⟨toks, .startTag (ascii "head") headOpen, h2 rfl, by decide, ?_⟩
+    refine ⟨toks, .startTag (ascii "head") headOpen, p, q, h2 rfl, by decide, hb, ?_⟩
     rw [h3 3]
     simp only [inject, Bool.false_eq_true, ↓reduceIte, List.append_assoc]
-    rw [lexN_step (lex_head _), lexN_step (lex_meta csp _), lexN_step (lex_script _)]
-    simp [lexN]
+    rw [lexR_step (lex_head _), lexR_step (lex_meta csp _), lexR_step (lex_script _)]
+    simp [lexR]
 
-/-- Safe as the text of a `<script>` element: no `</script` (in any case) and no `<!--`,
-so the element ends at the injected `</script>` (HTML script data states). -/
-def scriptSafe (js : String) : Bool :=
-  let low := String.ofList (js.toList.map Char.toLower)
-  (low.splitOn "</script").length == 1 && (js.splitOn "<!--").length == 1
+/-- The CSP comes first: the token form of `parse_order`. -/
+theorem csp_first (z : Code) (csp boot : String) :
+    ∃ ts h, (∀ t ∈ ts, t.allowed = true) ∧ h.isHead = true ∧
+      lexN (ts.length + 3) (buildCodes z csp boot) =
+        ts ++ [h, .startTag (ascii "meta") (cspMeta csp), .startTag (ascii "script") scriptOpen] := by
+  obtain ⟨ts, h, p, q, h1, h2, -, h4⟩ := parse_order z csp boot
+  exact ⟨ts, h, h1, h2, by simp [lexN, h4]⟩
+
+/-! ## Script data -/
+
+/-- An appropriate end tag in script data: `</script` (any case) then whitespace, `/` or `>`. -/
+def closeAtL : Code → Bool
+  | 60 :: 47 :: a :: b :: c :: d :: e :: f :: g :: _ =>
+    lower a == 115 && lower b == 99 && lower c == 114 && lower d == 105 && lower e == 112 &&
+      lower f == 116 && (isWs g || g == 47 || g == 62)
+  | _ => false
+
+def closeAt (z : Code) : Bool := closeAtL (z.take 9)
+
+/-- `<!--`, which enters the script data escaped states. -/
+def escAtL : Code → Bool
+  | [60, 33, 45, 45] => true
+  | _ => false
+
+def escAt (z : Code) : Bool := escAtL (z.take 4)
+
+/-- Script data after a `<script>` start tag (HTML tokenizer script data state): the text
+and the rest from the end tag on. `none` when `<!--` comes first: the escaped states,
+which this model does not follow. -/
+def scriptData : Code → Option (Code × Code)
+  | [] => some ([], [])
+  | c :: r =>
+    if closeAt (c :: r) then some ([], c :: r)
+    else if escAt (c :: r) then none
+    else (scriptData r).map fun p => (c :: p.1, p.2)
+
+/-- Script text that cannot end or escape early, even where it meets the injected
+`</script>`. -/
+def safeText (b : Code) : Bool :=
+  (List.range b.length).all fun i =>
+    !closeAt ((b ++ scriptClose).drop i) && !escAt ((b ++ scriptClose).drop i)
+
+theorem closeAt_app {x : Code} (y : Code) (h : 9 ≤ x.length) : closeAt (x ++ y) = closeAt x := by
+  simp only [closeAt, List.take_append_of_le_length h]
+
+theorem escAt_app {x : Code} (y : Code) (h : 4 ≤ x.length) : escAt (x ++ y) = escAt x := by
+  simp only [escAt, List.take_append_of_le_length h]
+
+theorem scriptClose_eq : scriptClose = [60, 47, 115, 99, 114, 105, 112, 116, 62] := by decide
+
+theorem scriptData_safe : ∀ (b w : Code),
+    (∀ i < b.length, closeAt ((b ++ scriptClose).drop i) = false ∧ escAt ((b ++ scriptClose).drop i) = false) →
+    scriptData (b ++ scriptClose ++ w) = some (b, scriptClose ++ w)
+  | [], w, _ => by
+    rw [scriptClose_eq]; simp [scriptData, closeAt, closeAtL, lower, isWs]
+  | c :: b, w, h => by
+    have h0 := h 0 (by simp)
+    simp only [List.drop_zero] at h0
+    have hl : 9 ≤ (c :: b ++ scriptClose).length := by rw [scriptClose_eq]; simp
+    have hc : closeAt (c :: b ++ scriptClose ++ w) = false := by
+      rw [List.append_assoc, ← List.append_assoc (c :: b), closeAt_app w hl, h0.1]
+    have he : escAt (c :: b ++ scriptClose ++ w) = false := by
+      rw [List.append_assoc, ← List.append_assoc (c :: b), escAt_app w (by omega), h0.2]
+    have ih := scriptData_safe b w (fun i hi => by
+      have := h (i + 1) (by simp; omega)
+      simpa using this)
+    simp only [List.cons_append] at hc he ⊢
+    simp only [scriptData, hc, he, Bool.false_eq_true, ↓reduceIte]
+    have ih' : scriptData (b ++ (scriptClose ++ w)) = some (b, scriptClose ++ w) := by
+      rw [← List.append_assoc]; exact ih
+    simp [ih']
+
+theorem safeText_spec {b : Code} (h : safeText b = true) :
+    ∀ i < b.length, closeAt ((b ++ scriptClose).drop i) = false ∧ escAt ((b ++ scriptClose).drop i) = false := by
+  intro i hi
+  simp only [safeText, List.all_eq_true, List.mem_range, Bool.and_eq_true, Bool.not_eq_eq_eq_not,
+    Bool.not_true] at h
+  exact h i hi
+
+theorem lex_scriptClose (w : Code) :
+    step (scriptClose ++ w) = some (.endTag (ascii "script"), scriptClose, w) := by
+  rw [scriptClose_eq]
+  simp [step, isWs, lt, opens, isAlpha, run, mδ, tagδ, label, nameOf, lower, ascii]
+
+/-- **The bootstrap runs before any napplet script.** With `safeText` bootstrap text,
+after the bootstrap `<script>` start tag the tokenizer reads exactly the bootstrap as the
+script's text, then the injected `</script>` end tag, and what follows is the napplet's
+remaining bytes. Every napplet byte before the insertion point is in an element-free token
+(`parse_order`), so no napplet script precedes the bootstrap. -/
+theorem bootstrap_first (z : Code) (csp boot : String) (hs : safeText (codes boot) = true) :
+    ∃ ts h p q, (∀ t ∈ ts, t.allowed = true) ∧ h.isHead = true ∧ stripBom z = p ++ q ∧
+      lexR (ts.length + 3) (buildCodes z csp boot) =
+        (ts ++ [h, .startTag (ascii "meta") (cspMeta csp), .startTag (ascii "script") scriptOpen],
+         codes boot ++ scriptClose ++ q) ∧
+      scriptData (codes boot ++ scriptClose ++ q) = some (codes boot, scriptClose ++ q) ∧
+      step (scriptClose ++ q) = some (.endTag (ascii "script"), scriptClose, q) := by
+  obtain ⟨ts, h, p, q, h1, h2, h3, h4⟩ := parse_order z csp boot
+  exact ⟨ts, h, p, q, h1, h2, h3, h4, scriptData_safe _ q (safeText_spec hs), lex_scriptClose q⟩
+
+/-- Safe as the text of the injected `<script>` element (`safeText` of its UTF-8 bytes). -/
+def scriptSafe (js : String) : Bool := safeText (codes js)
 
 /-! ## The byte-level statements -/
 
