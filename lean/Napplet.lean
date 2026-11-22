@@ -36,6 +36,7 @@ import Napplet.Component
 import Napplet.Runtime
 import Napplet.FMap
 import Napplet.Refine
+import Napplet.Codec
 import Napplet.Binding
 import Napplet.Nip19
 import Napplet.BindingUri
