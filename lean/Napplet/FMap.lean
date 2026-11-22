@@ -437,6 +437,18 @@ theorem length_le {I : Ivs} {n : Nat} {L : List Nat} (hc : Canon I)
   have := length_gaps I
   omega
 
+/-- One past the largest element. -/
+def top : Ivs → Nat
+  | [] => 0
+  | (_, b) :: I => max (b + 1) (top I)
+
+theorem lt_top : ∀ {I : Ivs} {x : Nat}, mem I x = true → x < top I
+  | [], _, h => by simp [mem_nil] at h
+  | (a, b) :: I, x, h => by
+    rcases mem_cons.mp h with h | h
+    · simp only [top]; omega
+    · have := lt_top h; simp only [top]; omega
+
 end Ivs
 
 end Napplet

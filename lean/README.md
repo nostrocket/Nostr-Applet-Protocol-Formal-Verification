@@ -3,7 +3,7 @@
 A machine-checked, executable model of a napplet shell: the NIP-5D core, all
 nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
 together, the host interface, and the napplet-side bootstrap and binding.
-1111 theorems and 848 evaluated vectors (124 of them end to end through the
+1118 theorems and 849 evaluated vectors (124 of them end to end through the
 composed runtime, all of which also run byte for byte through the `napplet-oracle`
 executable as 43 traces). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
 but the model was built from the upstream texts at the commits listed below.
@@ -72,9 +72,9 @@ no entry holding the default), and removed windows are canonical intervals (`Ivs
 `step'` runs one input; `abs_step'` and `step'_outputs` prove it is `Runtime.step` on
 the abstraction, so every theorem in this README holds of it. The memory theorems
 (`live_keys`, `bindings_keys`, `grants_keys`, `inst_keys`, `ports_bound`,
-`components_bound`, `removed_length_le`) say every per-window or per-port entry is a live
-window or a bound port, and that removed windows cost at most one interval more than
-there are live windows when the host numbers windows consecutively. The components'
+`components_bound`, `removed_length_le_unused`, `removed_length_le`) say every per-window
+or per-port entry is a live window or a bound port, and that removed windows cost at most
+one interval more than the live windows plus the window ids the host skipped. The components'
 `Cfg` policy functions are configuration, not state; the oracle builds them from a
 finite JSON form.
 
@@ -256,10 +256,13 @@ The amendments: `Run.Shell.check_one_reply` (one result, no call or effect),
 - `Refine.abs_step'`, `step'_outputs`, `WF.step'`, `Reachable'.abs`: the finite state
   refines the composed machine and stays canonical; `Runtime.step_frame` is the frame
   condition behind it. Memory: `live_keys`, `bindings_keys`, `grants_keys`, `inst_keys`,
-  `ports_bound`, `components_bound`, `removed_length_le` (with `Ivs.length_le`).
+  `ports_bound`, `components_bound`, `removed_length_le_unused`, `removed_length_le` (with
+  `Ivs.length_le`).
 - `Persist.persist_restore`, `decPersisted_enc`, `restore_clean`, `Inv.restore`,
   `Restored.inv` and the `Restored.*` headline theorems, `Restored.quota`,
   `Reachable.quota`, `Reachable''.abs`, `persist_restore'`, `WF.restore`.
+- `Bootstrap.rawJs_api` (the script's method table is `BindingApi.methods`),
+  `Bootstrap.bootstrap_safe` (safe inside `<script>` for every exposure).
 - `Srcdoc.parse_order`, `bootstrap_first` (the tokenizer reads exactly the bootstrap as the
   script's text, then the injected `</script>`, then napplet bytes), `scriptData_safe`,
   `Bootstrap.srcdoc_order` (the same for the shipped `srcdoc`, unconditionally).
@@ -664,8 +667,12 @@ the model.
     stored values, first-write order, erased when emptied) and NAP-CONFIG keeps
     `St.schemaKeys` and `St.valueKeys`. `RtState.persist` reads the record through them.
 
-57. **Removed windows are intervals.** The memory bound in windows assumes the host numbers
-    windows consecutively; with any other numbering the cost is the number of gaps.
+57. **Removed windows are intervals.** `removed_length_le_unused` bounds them, with no
+    assumption, by the live windows plus the ids below the largest removed one that were
+    never used; for a host that numbers windows consecutively that term is zero
+    (`removed_length_le`). Some memory per removed window is unavoidable in general: the
+    shell must refuse a removed window id forever (`removed_stays_removed`), and an
+    arbitrary set of removed ids among unused ones has no shorter description.
 
 58. **Oracle host stand-ins.** SHA-256 is computed; signatures come from the trace (valid
     unless listed); MIME sniffing recognises PNG, JPEG, GIF, WebP and PDF; there is no SVG
@@ -698,16 +705,20 @@ the model.
     script data state (`Srcdoc.scriptData`): the text ends at `</script` followed by
     whitespace, `/` or `>`. `<!--` would enter the escaped states, which the model does not
     follow; `safeText` rules it out for the injected text (including where it meets the
-    injected `</script>`), and `Bootstrap.safeJs` injects the bootstrap only if it is safe
-    (it is: vector), so `Bootstrap.srcdoc_order` needs no hypothesis.
+    injected `</script>`). The shipped script contains no `<` at all
+    (`Bootstrap.bootstrap_safe`, for every exposure), so `Bootstrap.srcdoc_order` needs
+    no hypothesis.
 
 ## Not modelled yet
 
-- Bounds on some per-session component records. NAP-MEDIA keeps the ids of ended
-  sessions (`MediaState.retired`), NAP-VALUE keeps transfer records after teardown for
-  `value.status`, and NAP-INTENT keeps deliveries that no live target accepts yet. These
-  grow with the session; the memory theorems cover the shell's maps, instance ids, ports
-  and per-endpoint component state, not these lists.
+- Three component lists the memory theorems do not bound, each because another
+  requirement keeps it: NAP-MEDIA keeps every issued session id (`used`, and the ended
+  ids in `MediaState.retired`) because existing theorems (`Run.Media.drop_used`,
+  `NapMedia.create_fresh`) pin that ids are never reused in a runtime session; NAP-VALUE
+  keeps transfer records after teardown because they are the napplet's payment ledger
+  (`value.status` "returns the latest known status", and records are scoped to the
+  napplet, not the endpoint); NAP-INTENT keeps accepted deliveries until a target is
+  live (`Run.Intent.drop_keeps_queue`), which is outstanding work, not history.
 - The deferred CLASS and CONNECT tracks.
 - Behaviour upstream leaves undefined, each shown by the upstream text:
   - NAP-MEDIA §Shell Behavior: `source` is required "unless the shell defines a

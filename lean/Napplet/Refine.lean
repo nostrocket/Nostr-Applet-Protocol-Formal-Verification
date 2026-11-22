@@ -1505,6 +1505,28 @@ theorem removed_length_le (hw : WF s) {n : Nat}
         exact absurd rfl this
     · exact .inl rfl
 
+/-- **Removed windows, unconditionally.** The intervals number at most one more than the
+live windows plus the window ids below the largest removed one that were never used. A
+host that numbers windows consecutively uses every id, so the last term is zero
+(`removed_length_le`): the cost does not grow with the number of removals. -/
+theorem removed_length_le_unused (hw : WF s) :
+    s.shell.removed.length ≤ s.shell.live.keys.length +
+      ((List.range (Ivs.top s.shell.removed)).filter fun w => ((abs s).shell.frames w).isNone).length + 1 := by
+  have h := Ivs.length_le hw.removed (n := Ivs.top s.shell.removed)
+    (L := s.shell.live.keys ++ (List.range (Ivs.top s.shell.removed)).filter fun w => ((abs s).shell.frames w).isNone)
+    (fun x hx => Ivs.lt_top hx) ?_
+  · simpa [Nat.add_assoc] using h
+  · intro x hx
+    cases hm : Ivs.mem s.shell.removed x
+    · right
+      by_cases hk : x ∈ s.shell.live.keys
+      · exact List.mem_append_left _ hk
+      · apply List.mem_append_right
+        simp only [List.mem_filter, List.mem_range]
+        refine ⟨hx, ?_⟩
+        simp [abs, ShellState'.abs, hm, FMap.get_of_not_mem hk, hw.live_dflt]
+    · exact .inl rfl
+
 end memory
 
 end Napplet.Refine
