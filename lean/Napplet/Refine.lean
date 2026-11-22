@@ -689,3 +689,364 @@ theorem step_frame (h : Host) (cfg : Config) (S : RtState) (i : Input) :
 end Runtime
 
 end Napplet
+
+namespace Napplet.Refine
+
+open _root_.Napplet.Runtime NapStorage
+open _root_.Napplet.Runtime (Output)
+
+/-- Keep only live statuses (the removed ones live in `ShellState'.removed`). -/
+def liveOnly : Option FrameStatus → Option FrameStatus
+  | some (.live id ex p ld) => some (.live id ex p ld)
+  | _ => none
+
+/-- The shell state with finite maps: live frames, removed windows as intervals,
+bindings and grants. -/
+structure ShellState' where
+  live : FMap WindowId (Option FrameStatus)
+  removed : Ivs
+  bindings : FMap PortId (Option Binding)
+  grants : FMap PortId (List Grant)
+
+def ShellState'.abs (s : ShellState') : ShellState where
+  frames w := if s.removed.mem w then some .removed else s.live.get w
+  bindings := s.bindings.get
+  grants := s.grants.get
+
+/-- NAP-STORAGE's component state with a finite store. -/
+structure StorageSt' where
+  store : FMap Scope KV
+  quota : Nat
+
+/-- NAP-CONFIG's component state with finite schemas and values. -/
+structure ConfigSt' where
+  schemas : FMap Scope (Option Run.Config.Reg)
+  values : FMap Scope (Option Json)
+  subs : List PortId
+
+/-- NAP-DISPLAY's component state with a finite framebuffer keyed by (display, pixel). -/
+structure DisplaySt' where
+  cfg : Run.Display.Cfg
+  devices : List NapDisplay.DisplayDevice
+  offline : List String
+  fb : FMap (String × (Nat × Nat)) NapDisplay.RGB
+
+/-- The runtime state as a port stores it. Every map is finite; the other fields are
+those of `RtState`. -/
+structure RtState' where
+  shell : ShellState'
+  inst : FMap WindowId Nat
+  ports : List PortId
+  now : Nat
+  user : String
+  names : FMap WindowId (Option String)
+  shellNap : Run.Shell.St
+  theme : Run.Theme.St
+  identity : Run.Identity.St
+  storage : StorageSt'
+  inc : Run.Inc.St
+  intent : Run.Intent.St
+  notify : Run.Notify.St
+  display : DisplaySt'
+  keys : Run.Keys.St
+  relay : Run.Relay.St
+  outbox : Run.Outbox.St
+  media : Run.Media.St
+  config : ConfigSt'
+  resource : Run.Resource.St
+  upload : Run.Upload.St
+  link : Run.Link.St
+  value : Run.Value.St
+  cvm : Run.Cvm.St
+  pow : Run.Pow.St
+
+/-- The abstraction: read every finite map as a function. -/
+def abs (s : RtState') : RtState where
+  shell := s.shell.abs
+  inst := s.inst.get
+  ports := s.ports
+  now := s.now
+  user := s.user
+  names := s.names.get
+  shellNap := s.shellNap
+  theme := s.theme
+  identity := s.identity
+  storage := { store := s.storage.store.get, quota := s.storage.quota }
+  inc := s.inc
+  intent := s.intent
+  notify := s.notify
+  display := { cfg := s.display.cfg, devices := s.display.devices, offline := s.display.offline,
+               fb := fun d xy => s.display.fb.get (d, xy) }
+  keys := s.keys
+  relay := s.relay
+  outbox := s.outbox
+  media := s.media
+  config := { schemas := s.config.schemas.get, values := s.config.values.get, subs := s.config.subs }
+  resource := s.resource
+  upload := s.upload
+  link := s.link
+  value := s.value
+  cvm := s.cvm
+  pow := s.pow
+
+/-! ### Re-tabulation -/
+
+def keepNe {α : Type} (l : List α) : Bool := !l.isEmpty
+def keepNat (n : Nat) : Bool := n != 0
+def keepRGB (c : NapDisplay.RGB) : Bool := decide (c ≠ [0, 0, 0])
+
+theorem keepSome_dflt {α : Type} : ∀ (b : Option α), b.isSome = false → b = none
+  | none, _ => rfl
+theorem keepNe_dflt {α : Type} : ∀ (b : List α), keepNe b = false → b = []
+  | [], _ => rfl
+  | _ :: _, h => by simp [keepNe] at h
+theorem keepNat_dflt : ∀ (b : Nat), keepNat b = false → b = 0 := by
+  intro b h; simpa [keepNat] using h
+theorem keepRGB_dflt : ∀ (b : NapDisplay.RGB), keepRGB b = false → b = [0, 0, 0] := by
+  intro b h; simpa [keepRGB] using h
+
+/-- Add every candidate window that is now removed to the interval set. -/
+def addRemoved (f : WindowId → Option FrameStatus) : List WindowId → Ivs → Ivs
+  | [], I => I
+  | w :: ws, I => addRemoved f ws (if f w = some .removed then Ivs.insert w I else I)
+
+theorem addRemoved_canon (f : WindowId → Option FrameStatus) : ∀ (ws : List WindowId) (I : Ivs),
+    Ivs.Canon I → Ivs.Canon (addRemoved f ws I)
+  | [], _, h => h
+  | w :: ws, I, h => by
+    simp only [addRemoved]
+    apply addRemoved_canon
+    split
+    · exact Ivs.insert_canon w I h
+    · exact h
+
+theorem addRemoved_mem (f : WindowId → Option FrameStatus) : ∀ (ws : List WindowId) (I : Ivs),
+    Ivs.Canon I → ∀ x, Ivs.mem (addRemoved f ws I) x = true ↔
+      Ivs.mem I x = true ∨ (x ∈ ws ∧ f x = some .removed)
+  | [], _, _, x => by simp [addRemoved]
+  | w :: ws, I, h, x => by
+    simp only [addRemoved]
+    have hc : Ivs.Canon (if f w = some .removed then Ivs.insert w I else I) := by
+      split
+      · exact Ivs.insert_canon w I h
+      · exact h
+    rw [addRemoved_mem f ws _ hc x]
+    by_cases hw : f w = some .removed
+    · simp only [hw, ↓reduceIte, Ivs.mem_insert w I h.ne x, List.mem_cons]
+      constructor
+      · rintro ((rfl | h1) | ⟨h1, h2⟩)
+        · exact .inr ⟨.inl rfl, hw⟩
+        · exact .inl h1
+        · exact .inr ⟨.inr h1, h2⟩
+      · rintro (h1 | ⟨rfl | h1, h2⟩)
+        · exact .inl (.inr h1)
+        · exact .inl (.inl rfl)
+        · exact .inr ⟨h1, h2⟩
+    · simp only [hw, ↓reduceIte, List.mem_cons]
+      constructor
+      · rintro (h1 | ⟨h1, h2⟩)
+        · exact .inl h1
+        · exact .inr ⟨.inr h1, h2⟩
+      · rintro (h1 | ⟨rfl | h1, h2⟩)
+        · exact .inl h1
+        · exact absurd h2 hw
+        · exact .inr ⟨h1, h2⟩
+
+/-- Re-tabulate the state `t` that `Runtime.step` produced from `S = abs s`, on the keys
+the input can have touched. -/
+def reify (s : RtState') (i : Input) (S t : RtState) (outs : List Runtime.Output) : RtState' :=
+  let tw := i.wins ++ outWins outs
+  let ws := s.shell.live.keys ++ tw
+  let tp := i.ports ++ outPorts outs
+  let sc := scopesAt S i
+  { shell := { live := FMap.tab none Option.isSome ws (fun w => liveOnly (t.shell.frames w))
+               removed := addRemoved t.shell.frames ws s.shell.removed
+               bindings := FMap.tab none Option.isSome (s.shell.bindings.keys ++ tp) t.shell.bindings
+               grants := FMap.tab [] keepNe (s.shell.grants.keys ++ tp) t.shell.grants }
+    inst := FMap.tab 0 keepNat (s.inst.keys ++ tw) t.inst
+    ports := t.ports
+    now := t.now
+    user := t.user
+    names := s.names
+    shellNap := t.shellNap
+    theme := t.theme
+    identity := t.identity
+    storage := { store := FMap.tab [] keepNe (s.storage.store.keys ++ sc) t.storage.store,
+                 quota := t.storage.quota }
+    inc := t.inc
+    intent := t.intent
+    notify := t.notify
+    display := { cfg := t.display.cfg, devices := t.display.devices, offline := t.display.offline,
+                 fb := FMap.tab [0, 0, 0] keepRGB (s.display.fb.keys ++ pixelsAt i)
+                   (fun k => t.display.fb k.1 k.2) }
+    keys := t.keys
+    relay := t.relay
+    outbox := t.outbox
+    media := t.media
+    config := { schemas := FMap.tab none Option.isSome (s.config.schemas.keys ++ sc) t.config.schemas,
+                values := FMap.tab none Option.isSome (s.config.values.keys ++ sc) t.config.values,
+                subs := t.config.subs }
+    resource := t.resource
+    upload := t.upload
+    link := t.link
+    value := t.value
+    cvm := t.cvm
+    pow := t.pow }
+
+/-- One step on the finite representation: the outputs of `Runtime.step` on `abs s`, and
+the re-tabulated state. -/
+def step' (h : Host) (cfg : Config) (s : RtState') (i : Input) : RtState' × List Runtime.Output :=
+  let S := abs s
+  let r := Runtime.step h cfg S i
+  (reify s i S r.1 r.2, r.2)
+
+theorem step'_outputs (h : Host) (cfg : Config) (s : RtState') (i : Input) :
+    (step' h cfg s i).2 = (Runtime.step h cfg (abs s) i).2 := rfl
+
+/-! ### Well-formedness -/
+
+/-- The representation is canonical: defaults are the model's, keys are distinct, no entry
+holds the default, live frames are live and not removed, intervals are canonical. -/
+structure WF (s : RtState') : Prop where
+  live_dflt : s.shell.live.dflt = none
+  live_wf : s.shell.live.WF Option.isSome
+  live_live : ∀ e ∈ s.shell.live.entries, liveOnly e.2 = e.2
+  live_not_removed : ∀ w ∈ s.shell.live.keys, Ivs.mem s.shell.removed w = false
+  removed : Ivs.Canon s.shell.removed
+  bindings_dflt : s.shell.bindings.dflt = none
+  bindings_wf : s.shell.bindings.WF Option.isSome
+  grants_dflt : s.shell.grants.dflt = []
+  grants_wf : s.shell.grants.WF keepNe
+  inst_dflt : s.inst.dflt = 0
+  inst_wf : s.inst.WF keepNat
+  store_dflt : s.storage.store.dflt = []
+  store_wf : s.storage.store.WF keepNe
+  schemas_dflt : s.config.schemas.dflt = none
+  schemas_wf : s.config.schemas.WF Option.isSome
+  values_dflt : s.config.values.dflt = none
+  values_wf : s.config.values.WF Option.isSome
+  fb_dflt : s.display.fb.dflt = [0, 0, 0]
+  fb_wf : s.display.fb.WF keepRGB
+
+/-! ### The refinement -/
+
+theorem liveOnly_live {o : Option FrameStatus} (h : (liveOnly o).isSome = true) : liveOnly o = o := by
+  match o, h with
+  | some (.live _ _ _ _), _ => rfl
+
+theorem liveOnly_idem (o : Option FrameStatus) : liveOnly (liveOnly o) = liveOnly o := by
+  match o with
+  | some (.live _ _ _ _) => rfl
+  | some .removed => rfl
+  | none => rfl
+
+/-- A map tabulated on a superset of the keys where `t` differs from `abs s` denotes `t`. -/
+theorem get_tab_of {α β : Type} [DecidableEq α] {m : FMap α β} {d : β} {keep : β → Bool}
+    {ks : List α} {f : α → β} (hd : m.dflt = d) (hk : ∀ b, keep b = false → b = d)
+    (hf : ∀ a, a ∉ ks → f a = m.get a) : (FMap.tab d keep (m.keys ++ ks) f).get = f := by
+  apply FMap.get_tab hk
+  intro a ha
+  simp only [List.mem_append, not_or] at ha
+  rw [hf a ha.2, FMap.get_of_not_mem ha.1, hd]
+
+theorem abs_reify {s : RtState'} {i : Input} {t : RtState} {outs : List Runtime.Output}
+    (hw : WF s) (hf : Frame (abs s) t i outs) : abs (reify s i (abs s) t outs) = t := by
+  obtain ⟨hfr, hrem, hbi, hgr, hin, hna, hst, hsc, hva, hfb⟩ := hf
+  have hframes : ∀ w, (abs s).shell.frames w =
+      if Ivs.mem s.shell.removed w then some .removed else s.shell.live.get w := fun _ => rfl
+  generalize hS : abs s = S at hfr hrem hbi hgr hin hna hst hsc hva hfb hframes
+  cases t with
+  | mk tsh tinst tports tnow tuser tnames tshellNap ttheme tidentity tstorage tinc tintent tnotify
+      tdisplay tkeys trelay toutbox tmedia tconfig tresource tupload tlink tvalue tcvm tpow =>
+  cases tsh with
+  | mk tf tb tg =>
+  cases tstorage with
+  | mk tstore tquota =>
+  cases tconfig with
+  | mk tsch tval tsubs =>
+  cases tdisplay with
+  | mk dcfg ddev doff dfb =>
+  simp only at hfr hrem hbi hgr hin hna hst hsc hva hfb
+  have hSb : S.shell.bindings = s.shell.bindings.get := by rw [← hS]; rfl
+  have hSg : S.shell.grants = s.shell.grants.get := by rw [← hS]; rfl
+  have hSi : S.inst = s.inst.get := by rw [← hS]; rfl
+  have hSn : S.names = s.names.get := by rw [← hS]; rfl
+  have hSst : S.storage.store = s.storage.store.get := by rw [← hS]; rfl
+  have hSsc : S.config.schemas = s.config.schemas.get := by rw [← hS]; rfl
+  have hSva : S.config.values = s.config.values.get := by rw [← hS]; rfl
+  have hSfb : S.display.fb = fun d xy => s.display.fb.get (d, xy) := by rw [← hS]; rfl
+  simp only [abs, reify, ShellState'.abs]
+  congr 1
+  · congr 1
+    funext w
+    have hlive : (FMap.tab none Option.isSome (s.shell.live.keys ++ (i.wins ++ outWins outs))
+        (fun w => liveOnly (tf w))).get = fun w => liveOnly (tf w) := by
+      apply FMap.get_tab keepSome_dflt
+      intro v hv
+      simp only [List.mem_append, not_or] at hv
+      rw [hfr v hv.2.1 hv.2.2, hframes, FMap.get_of_not_mem hv.1, hw.live_dflt]
+      split <;> rfl
+    rw [hlive]
+    have hmem := addRemoved_mem tf (s.shell.live.keys ++ (i.wins ++ outWins outs)) s.shell.removed
+      hw.removed w
+    have hnot : ∀ st, tf w = some st → st ≠ .removed →
+        Ivs.mem (addRemoved tf (s.shell.live.keys ++ (i.wins ++ outWins outs)) s.shell.removed) w = false := by
+      intro st htf hst'
+      cases hm : Ivs.mem (addRemoved tf _ s.shell.removed) w
+      · rfl
+      · rcases hmem.mp hm with h1 | ⟨_, h2⟩
+        · have := hrem w (by rw [hframes]; simp [h1]); rw [htf] at this; cases this; exact absurd rfl hst'
+        · rw [htf] at h2; cases h2; exact absurd rfl hst'
+    cases htf : tf w with
+    | none =>
+      have : Ivs.mem (addRemoved tf (s.shell.live.keys ++ (i.wins ++ outWins outs)) s.shell.removed) w = false := by
+        cases hm : Ivs.mem (addRemoved tf _ s.shell.removed) w
+        · rfl
+        · rcases hmem.mp hm with h1 | ⟨_, h2⟩
+          · have := hrem w (by rw [hframes]; simp [h1]); rw [htf] at this; cases this
+          · rw [htf] at h2; cases h2
+      simp [this, liveOnly, htf]
+    | some st =>
+      cases st with
+      | removed =>
+        have : Ivs.mem (addRemoved tf (s.shell.live.keys ++ (i.wins ++ outWins outs)) s.shell.removed) w = true := by
+          apply hmem.mpr
+          by_cases hk : w ∈ s.shell.live.keys ++ (i.wins ++ outWins outs)
+          · exact .inr ⟨hk, htf⟩
+          · simp only [List.mem_append, not_or] at hk
+            have h1 := hfr w hk.2.1 hk.2.2
+            rw [htf, hframes, FMap.get_of_not_mem hk.1, hw.live_dflt] at h1
+            split at h1
+            · rename_i hm; exact .inl hm
+            · cases h1
+        simp [this]
+      | live id ex p ld =>
+        simp [hnot _ htf (by simp), liveOnly, htf]
+    · exact get_tab_of hw.bindings_dflt keepSome_dflt (fun q hq => by
+        simp only [List.mem_append, not_or] at hq
+        rw [hbi q hq.2, hSb])
+    · exact get_tab_of hw.grants_dflt keepNe_dflt (fun q hq => by
+        simp only [List.mem_append, not_or] at hq
+        rw [hgr q hq.1 hq.2, hSg])
+  · exact get_tab_of hw.inst_dflt keepNat_dflt (fun w hw' => by
+      simp only [List.mem_append, not_or] at hw'
+      rw [hin w hw'.1 hw'.2, hSi])
+  · rw [hna, hSn]
+  · congr 1
+    exact get_tab_of hw.store_dflt keepNe_dflt (fun sc h => by rw [hst sc h, hSst])
+  · congr 1
+    have := get_tab_of (f := fun k => dfb k.1 k.2) hw.fb_dflt keepRGB_dflt (fun k h => by
+      rw [hfb k h, hSfb])
+    funext d xy
+    exact congrFun this (d, xy)
+  · congr 1
+    · exact get_tab_of hw.schemas_dflt keepSome_dflt (fun sc h => by rw [hsc sc h, hSsc])
+    · exact get_tab_of hw.values_dflt keepSome_dflt (fun sc h => by rw [hva sc h, hSva])
+
+/-- The refinement: `step'` on the finite representation is `Runtime.step` on its
+abstraction. With `step'_outputs`, every theorem about `Runtime.step` holds of `step'`. -/
+theorem abs_step' {h : Host} {cfg : Config} {s : RtState'} (hw : WF s) (i : Input) :
+    abs (step' h cfg s i).1 = (Runtime.step h cfg (abs s) i).1 :=
+  abs_reify hw (step_frame h cfg (abs s) i)
+
+end Napplet.Refine
