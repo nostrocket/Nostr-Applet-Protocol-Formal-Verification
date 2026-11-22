@@ -6,6 +6,7 @@ https://mozilla.org/MPL/2.0/.
 
 import Napplet.Component
 import Napplet.Nap.Relay
+import Napplet.Net
 
 /-!
 # NAP-RELAY runtime component
@@ -52,7 +53,14 @@ Behaviour (this file is the executable model of `Napplet.NapRelay`):
   `relay.closed {subId, reason: "policy denied"}`; refused query:
   `relay.query.result {id, error: "policy denied"}`), `Cfg.canWrite` gates publishing
   (`ok: false, error: "policy denied"`). Scoped relay URLs must pass `Cfg.scopedAllowed`
-  (SSRF validation) or the subscription is closed with `"invalid relay destination"`.
+  (SSRF validation, default `Net.relayAllowed`: `wss://`, no localhost/`.local` names, no
+  private or reserved IP literals) or the subscription is closed with
+  `"invalid relay destination"`.
+* **No foreign pubkey.** A `publish`/`publishEncrypted` template whose raw `event`
+  carries a string `pubkey` other than the shell user's is refused with
+  `ok: false, error: "policy denied"` instead of being re-stamped (NAP-POW: a mined event
+  is signed verbatim or rejected; the template codec drops `pubkey`, so it is read from
+  the raw JSON as `Req.publish … pk`).
 
 Malformed requests: `relay.subscribe` with a string `subId` but a bad `id`, `filters` or
 `relay` gets `relay.closed {subId, reason: "invalid relay subscription"}` (kehto's
@@ -90,16 +98,17 @@ structure Cfg where
   /-- Relay write ACL (publish, publishEncrypted). -/
   canWrite : Identity → Bool := fun _ => true
   /-- Validation of a napplet-scoped relay URL (SSRF guard). -/
-  scopedAllowed : String → Bool := fun u => u.startsWith "wss://"
+  scopedAllowed : String → Bool := Net.relayAllowed
   /-- Attach `sidecar.relayHints` with the observed relay. -/
   relayHints : Bool := true
 
 inductive Req where
   | subscribe (id subId : String) (filters : List Json) (relay : Option String)
   | close (id subId : String)
-  | publish (id : String) (t : EventTemplate)
+  /-- `pk`: the string `pubkey` member of the raw `event`, if any. -/
+  | publish (id : String) (t : EventTemplate) (pk : Option String)
   | publishEncrypted (id : String) (t : EventTemplate) (recipient : String)
-      (enc : Option Encryption)
+      (enc : Option Encryption) (pk : Option String)
   | query (id : String) (filters : List Json)
   deriving DecidableEq, Repr
 
@@ -221,14 +230,15 @@ def decode (j : Json) : Decoded Req :=
       | none => .reject []
       | some id =>
         match templateOf? j with
-        | some tp => .ok (.publish id tp)
+        | some tp => .ok (.publish id tp ((j.get? "event").bind Net.claimedPubkey?))
         | none => .reject [pubFail false id "invalid request"]
     else if t = "relay.publishEncrypted" then
       match reqId? j with
       | none => .reject []
       | some id =>
         match templateOf? j, j.getStr? "recipient", encOf? j with
-        | some tp, some rc, some e => .ok (.publishEncrypted id tp rc e)
+        | some tp, some rc, some e =>
+          .ok (.publishEncrypted id tp rc e ((j.get? "event").bind Net.claimedPubkey?))
         | _, _, _ => .reject [pubFail true id "invalid request"]
     else if t = "relay.query" then
       match reqId? j with
@@ -244,9 +254,11 @@ def encodeReq : Req → Json
       [("id", some (.str id)), ("subId", some (.str sid)), ("filters", some (.arr fs)),
        ("relay", r.map .str)]
   | .close id sid => Json.msg "relay.close" [("id", some (.str id)), ("subId", some (.str sid))]
-  | .publish id t => Json.msg "relay.publish" [("id", some (.str id)), ("event", some t.toJson)]
-  | .publishEncrypted id t rc e => Json.msg "relay.publishEncrypted"
-      [("id", some (.str id)), ("event", some t.toJson), ("recipient", some (.str rc)),
+  | .publish id t pk => Json.msg "relay.publish"
+      [("id", some (.str id)), ("event", some (Net.withPubkey t.toJson pk))]
+  | .publishEncrypted id t rc e pk => Json.msg "relay.publishEncrypted"
+      [("id", some (.str id)), ("event", some (Net.withPubkey t.toJson pk)),
+       ("recipient", some (.str rc)),
        ("encryption", e.map fun x => .str x.name)]
   | .query id fs => Json.msg "relay.query" [("id", some (.str id)), ("filters", some (.arr fs))]
 
@@ -298,14 +310,16 @@ def stepReq (h : Host) (w : World) (cx : Ctx) (cfg : Cfg) (nx : Nat) (b : Bucket
   | .close _ sid =>
     let st := stopSub b sid
     (st.1, st.2 ++ [.send cx.port (closedMsg sid none)], nx)
-  | .publish id t =>
+  | .publish id t pk =>
     if !cfg.canWrite cx.identity then (b, [.send cx.port (pubFail false id "policy denied")], nx)
+    else if !Net.pubkeyOk w.user pk then (b, [.send cx.port (pubFail false id "policy denied")], nx)
     else if h.looksCiphertext t.content then
       (b, [.send cx.port (pubFail false id "blocked: ciphertext from napplet")], nx)
     else if w.user = "" then (b, [.send cx.port (pubFail false id "no signer configured")], nx)
     else (⟨nx, .sign id false⟩ :: b, [.call (tag nx) (.sign (t.stamp w.user w.now))], nx + 1)
-  | .publishEncrypted id t rc e =>
+  | .publishEncrypted id t rc e pk =>
     if !cfg.canWrite cx.identity then (b, [.send cx.port (pubFail true id "policy denied")], nx)
+    else if !Net.pubkeyOk w.user pk then (b, [.send cx.port (pubFail true id "policy denied")], nx)
     else if h.looksCiphertext t.content then
       (b, [.send cx.port (pubFail true id "blocked: ciphertext from napplet")], nx)
     else if w.user = "" then (b, [.send cx.port (pubFail true id "no signer configured")], nx)
@@ -444,11 +458,12 @@ theorem decode_encodeReq (r : Req) (hr : r.WF) : decode (encodeReq r) = .ok r :=
       Json.lookup, reqId?, filtersOf?, optStr?, hr]
   | close id sid => simp [decode, encodeReq, Json.msg, Json.mkObj, Json.getStr?, Json.get?,
       Json.lookup, reqId?]
-  | publish id t => simp [decode, encodeReq, Json.msg, Json.mkObj, Json.getStr?, Json.get?,
-      Json.lookup, reqId?, templateOf?]
-  | publishEncrypted id t rc e =>
+  | publish id t pk => simp [decode, encodeReq, Json.msg, Json.mkObj, Json.getStr?, Json.get?,
+      Json.lookup, reqId?, templateOf?, Net.ofJson?_withPubkey, Net.claimedPubkey?_withPubkey]
+  | publishEncrypted id t rc e pk =>
     rcases e with _ | ⟨_ | _⟩ <;> simp [decode, encodeReq, Json.msg, Json.mkObj, Json.getStr?,
-      Json.get?, Json.lookup, reqId?, templateOf?, encOf?, Encryption.name, Encryption.ofName?]
+      Json.get?, Json.lookup, reqId?, templateOf?, encOf?, Encryption.name, Encryption.ofName?,
+      Net.ofJson?_withPubkey, Net.claimedPubkey?_withPubkey]
   | query id fs =>
     simp only [Req.WF] at hr
     simp [decode, encodeReq, Json.msg, Json.mkObj, Json.getStr?, Json.get?, Json.lookup, reqId?,
@@ -524,30 +539,35 @@ theorem handle_no_publish (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (
   intro hm
   cases r <;> simp only [handle, stepReq, stopSub] at hm <;> (repeat' split at hm) <;> simp at hm
 
-/-- A request is signed only if the endpoint may write, a user is signed in, and the
-napplet-supplied content does not look like ciphertext (NIP-5D §Security 7). The
-unsigned event is the napplet's template stamped with the user's key. -/
+/-- A request is signed only if the endpoint may write, the template claims no pubkey
+other than the user's, a user is signed in, and the napplet-supplied content does not
+look like ciphertext (NIP-5D §Security 7). The unsigned event is the napplet's template
+stamped with the user's key. -/
 theorem handle_sign {h : Host} {w : World} {cx : Ctx} {s : St} {r : Req} {t : CallTag}
     {u : UnsignedEvent} (hm : Eff.call t (.sign u) ∈ (handle h w cx s r).2) :
     s.cfg.canWrite cx.identity = true ∧ h.looksCiphertext u.content = false ∧
-      w.user ≠ "" ∧ ∃ id tp, r = .publish id tp ∧ u = tp.stamp w.user w.now := by
+      w.user ≠ "" ∧ ∃ id tp pk, r = .publish id tp pk ∧ Net.pubkeyOk w.user pk = true ∧
+        u = tp.stamp w.user w.now := by
   cases r <;> simp only [handle, stepReq, stopSub] at hm <;> (repeat' split at hm) <;>
     simp at hm
-  rename_i id tp hw hc hu
+  rename_i id tp pk hw hp hc hu
   obtain ⟨-, rfl⟩ := hm
-  exact ⟨by simpa using hw, by simpa [EventTemplate.stamp] using hc, hu, id, tp, rfl, rfl⟩
+  exact ⟨by simpa using hw, by simpa [EventTemplate.stamp] using hc, hu, id, tp, pk, rfl,
+    by simpa using hp, rfl⟩
 
 /-- `publishEncrypted`: the shell encrypts the napplet's plaintext itself, after
-checking it is not ciphertext and that the endpoint may write. -/
+checking it is not ciphertext, that the endpoint may write and that the template claims
+no foreign pubkey. -/
 theorem handle_encrypt {h : Host} {w : World} {cx : Ctx} {s : St} {r : Req} {t : CallTag}
     {sc : Encryption} {rc pt : String} (hm : Eff.call t (.encrypt sc rc pt) ∈ (handle h w cx s r).2) :
     s.cfg.canWrite cx.identity = true ∧ h.looksCiphertext pt = false ∧
-      ∃ id tp e, r = .publishEncrypted id tp rc e ∧ pt = tp.content ∧ sc = e.getD .nip44 := by
+      ∃ id tp e pk, r = .publishEncrypted id tp rc e pk ∧ Net.pubkeyOk w.user pk = true ∧
+        pt = tp.content ∧ sc = e.getD .nip44 := by
   cases r <;> simp only [handle, stepReq, stopSub] at hm <;> (repeat' split at hm) <;>
     simp at hm
-  rename_i id tp rc' e hw hc _
+  rename_i id tp rc' e pk hw hp hc _
   obtain ⟨-, rfl, rfl, rfl⟩ := hm
-  exact ⟨by simpa using hw, by simpa using hc, id, tp, e, rfl, rfl, rfl⟩
+  exact ⟨by simpa using hw, by simpa using hc, id, tp, e, pk, rfl, by simpa using hp, rfl, rfl⟩
 
 theorem stepReply_sign {h : Host} {w : World} {cfg : Cfg} {nx : Nat} {port : PortId}
     {b : Bucket} {n : Nat} {rep : Reply} {t : CallTag} {u : UnsignedEvent}
@@ -852,6 +872,27 @@ def ev5 : NostrEvent :=
 
 -- Teardown stops the subscription.
 #guard (drop (run (St.init) (Json.parse! subReq) []).1 7).2 == [.effect (.unsubscribe (tag 0))]
+
+-- A template claiming a pubkey other than the user's is refused, not re-stamped (NAP-POW).
+#guard match sends (run (St.init) (Json.parse! "{ \"type\": \"relay.publish\", \"id\": \"b3\", \"event\": { \"kind\": 1, \"content\": \"x\", \"pubkey\": \"other...\" } }") []).2 with
+  | [m] => Json.same m (Json.parse! "{ \"type\": \"relay.publish.result\", \"id\": \"b3\", \"ok\": false, \"error\": \"policy denied\" }")
+  | _ => false
+#guard match sends (run (St.init) (Json.parse! "{ \"type\": \"relay.publishEncrypted\", \"id\": \"f7\", \"event\": { \"kind\": 4, \"content\": \"x\", \"pubkey\": \"other...\" }, \"recipient\": \"r...\" }") []).2 with
+  | [m] => Json.same m (Json.parse! "{ \"type\": \"relay.publishEncrypted.result\", \"id\": \"f7\", \"ok\": false, \"error\": \"policy denied\" }")
+  | _ => false
+-- The user's own pubkey is accepted and signed as usual.
+#guard (run (St.init) (Json.parse! "{ \"type\": \"relay.publish\", \"id\": \"b4\", \"event\": { \"kind\": 1, \"content\": \"x\", \"created_at\": 5, \"pubkey\": \"def...\" } }") []).2 ==
+  [.call (tag 0) (.sign { pubkey := "def...", createdAt := 5, kind := 1, tags := [], content := "x" })]
+#guard decode (Json.parse! "{ \"type\": \"relay.publish\", \"id\": \"b4\", \"event\": { \"kind\": 1, \"pubkey\": \"def...\" } }") matches
+  .ok (.publish "b4" { kind := 1, content := "", tags := [], createdAt := none } (some "def..."))
+
+-- Scoped relays must pass `Net.relayAllowed`: no private or localhost relay.
+#guard ["wss://127.0.0.1", "wss://localhost:7777", "wss://[::1]", "wss://192.168.1.2", "ws://relay.example.com"].all fun u =>
+  match sends (run (St.init) (Json.parse! ("{ \"type\": \"relay.subscribe\", \"id\": \"a2\", \"subId\": \"s2\", \"filters\": [{}], \"relay\": \"" ++ u ++ "\" }")) []).2 with
+  | [m] => Json.same m (Json.parse! "{ \"type\": \"relay.closed\", \"subId\": \"s2\", \"reason\": \"invalid relay destination\" }")
+  | _ => false
+#guard (run (St.init) (Json.parse! "{ \"type\": \"relay.subscribe\", \"id\": \"a3\", \"subId\": \"s3\", \"filters\": [{}], \"relay\": \"wss://groups.example.com\" }") []).2 ==
+  [.call (tag 0) (.subscribe [Json.parse! "{}"] (some ["wss://groups.example.com"]))]
 
 end Vectors
 

@@ -12,7 +12,7 @@ COMPS = [
     ("Intent", "intent", "intent", "intentCfg", "Run.Intent.St.init cfg.intentCfg"),
     ("Notify", "notify", "notify", "notifyCfg", "Run.Notify.St.init cfg.notifyCfg"),
     ("Display", "display", "display", "displayCfg", "Run.Display.St.init cfg.displayCfg"),
-    ("Keys", "keys", "keys", None, "Run.Keys.St.init"),
+    ("Keys", "keys", "keys", "keysCfg", "Run.Keys.St.init cfg.keysCfg"),
     ("Relay", "relay", "relay", "relayCfg", "Run.Relay.St.init cfg.relayCfg"),
     ("Outbox", "outbox", "outbox", "outboxCfg", "Run.Outbox.St.init cfg.outboxCfg"),
     ("Media", "media", "media", "mediaCfg", "Run.Media.St.init cfg.mediaCfg"),

@@ -38,7 +38,20 @@ Per URL (`bytes`, and each `bytesMany` item independently):
 5. The outcome goes through `NapResource.bytes` (hop, redirect, size, Blossom hash,
    sniffing and rasterisation policy), exactly as for a single URL, so a
    `bytesMany` item is processed as an independent `bytes(url)`.
-6. Decoded bytes delivered in one envelope count against `Cfg.quota`; an item
+6. The sniffed MIME type must be on the URL scheme's allowlist (`Cfg.mimeAllowed`,
+   default `defaultMimeAllowed`, upstream "Enforce scheme-appropriate allowlists");
+   otherwise the item is `blocked-by-policy`. The default compares the type's essence
+   (before `;`, ASCII-lowercased) against: for `nostr:` (a NIP-19 hop yields event
+   JSON) `application/json`, `text/plain`; for every other scheme the images
+   `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/avif`, `image/bmp`,
+   `image/x-icon` (rasterised SVG arrives as PNG/WebP), the audio/video types WHATWG
+   sniffing produces (`audio/mpeg`, `audio/wave`, `audio/aiff`, `audio/basic`,
+   `audio/midi`, `audio/ogg`, `audio/flac`, `audio/mp4`, `audio/webm`,
+   `application/ogg`, `video/mp4`, `video/webm`, `video/ogg`, `video/avi`), and
+   `application/octet-stream`, `text/plain`, `application/json`, `application/pdf`.
+   Never allowed by default: `text/html`, XML, scripts, CSS, fonts, `image/svg+xml`
+   (already refused raw), archives.
+7. Decoded bytes delivered in one envelope count against `Cfg.quota`; an item
    that would exceed it is `quota-exceeded`.
 
 A request with an `id` that is already in flight on the endpoint is ignored.
@@ -527,6 +540,50 @@ def itemOf (h : Host) (pol : Policy) (url : String) : Outcome → Item
     | .ok d => .ok d
     | .error e => .error (e, none)
 
+/-! ## MIME allowlist -/
+
+/-- MIME essence: the part before `;`, without surrounding spaces, ASCII-lowercased. -/
+def mimeEssence (m : String) : String :=
+  let cs := (m.toList.takeWhile (· ≠ ';')).dropWhile (· = ' ')
+  let cs := (cs.reverse.dropWhile (· = ' ')).reverse
+  String.ofList (cs.map fun c => if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (c.toNat + 32) else c)
+
+def mediaMimes : List String :=
+  ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/x-icon",
+   "audio/mpeg", "audio/wave", "audio/aiff", "audio/basic", "audio/midi", "audio/ogg", "audio/flac",
+   "audio/mp4", "audio/webm", "application/ogg",
+   "video/mp4", "video/webm", "video/ogg", "video/avi",
+   "application/octet-stream", "text/plain", "application/json", "application/pdf"]
+
+/-- Default scheme-appropriate MIME allowlist (see the module docstring, step 6). -/
+def defaultMimeAllowed : Scheme → String → Bool
+  | .nostr, m => ["application/json", "text/plain"].contains (mimeEssence m)
+  | _, m => mediaMimes.contains (mimeEssence m)
+
+/-- Apply the MIME allowlist of the URL's scheme to a delivered item. -/
+def gateMime (mimeOk : Scheme → String → Bool) (url : String) : Item → Item
+  | .ok d =>
+    match schemeOf (norm url) with
+    | some sc => if mimeOk sc d.mime then .ok d else .error (.blockedByPolicy, none)
+    | none => .error (.blockedByPolicy, none)
+  | .error e => .error e
+
+theorem gateMime_ok {mimeOk : Scheme → String → Bool} {url : String} {it : Item} {d : Delivered}
+    (h : gateMime mimeOk url it = .ok d) :
+    it = .ok d ∧ ∃ sc, schemeOf (norm url) = some sc ∧ mimeOk sc d.mime = true := by
+  cases it with
+  | error e => simp [gateMime] at h
+  | ok d' =>
+    simp only [gateMime] at h
+    split at h
+    · rename_i sc hsc
+      split at h
+      · rename_i hm
+        cases h
+        exact ⟨rfl, sc, hsc, hm⟩
+      · cases h
+    · cases h
+
 /-- Decoded bytes in one envelope count against the quota, in order. -/
 def applyQuota (quota : Nat) : Nat → List Item → List Item
   | _, [] => []
@@ -549,6 +606,9 @@ structure Cfg where
   discloseInfo : Bool := true
   /-- Disclose `maxBytes`/`maxUrls` in `resource.info`. -/
   discloseLimits : Bool := true
+  /-- Scheme-appropriate allowlist for the sniffed MIME type; anything else is
+  `blocked-by-policy`. -/
+  mimeAllowed : Scheme → String → Bool := defaultMimeAllowed
 
 inductive SlotSt where
   | queued
@@ -628,14 +688,14 @@ def itemJson (url : String) : Item → Json
   | .error (e, m) => Json.mkObj [("url", some (.str url)), ("ok", some (.bool false)),
                    ("error", some (.str (errName e))), ("message", m.map .str)]
 
-def slotItem (h : Host) (pol : Policy) (sl : Slot) : Item :=
+def slotItem (h : Host) (pol : Policy) (mimeOk : Scheme → String → Bool) (sl : Slot) : Item :=
   match sl.st with
-  | .got o => itemOf h pol sl.url o
+  | .got o => gateMime mimeOk sl.url (itemOf h pol sl.url o)
   | _ => .error (.networkError, none)
 
 /-- The items a finished job delivers, in input order. -/
 def jobItems (h : Host) (cfg : Cfg) (j : Job) : List Item :=
-  applyQuota cfg.quota 0 (j.slots.map (slotItem h cfg.pol))
+  applyQuota cfg.quota 0 (j.slots.map (slotItem h cfg.pol cfg.mimeAllowed))
 
 /-- The terminal envelope of a finished job. -/
 def finishMsg (h : Host) (cfg : Cfg) (j : Job) : Json :=
@@ -881,36 +941,47 @@ theorem applyQuota_length (quota used : Nat) (items : List Item) :
     | ok d => simp only [applyQuota]; split <;> simp [ih]
     | error e => simp [applyQuota, ih]
 
-/-- Every delivered item is `NapResource.bytes` of some fetch outcome for its URL. -/
-theorem jobItems_ok {h : Host} {cfg : Cfg} {j : Job} {d : Delivered} (hd : .ok d ∈ jobItems h cfg j) :
-    ∃ u o, NapResource.bytes (envOf h o) cfg.pol u = .ok d := by
+/-- Every delivered item is `NapResource.bytes` of some fetch outcome for its slot's URL,
+and its MIME type is on the allowlist of that URL's scheme. -/
+theorem jobItems_slot {h : Host} {cfg : Cfg} {j : Job} {d : Delivered} (hd : .ok d ∈ jobItems h cfg j) :
+    ∃ sl ∈ j.slots, ∃ o, NapResource.bytes (envOf h o) cfg.pol (norm sl.url) = .ok d ∧
+      ∃ sc, schemeOf (norm sl.url) = some sc ∧ cfg.mimeAllowed sc d.mime = true := by
   have := applyQuota_ok hd
   simp only [List.mem_map] at this
-  obtain ⟨sl, -, hs⟩ := this
+  obtain ⟨sl, hsl, hs⟩ := this
   simp only [slotItem] at hs
   split at hs
   · rename_i o _
+    obtain ⟨hi, hm⟩ := gateMime_ok hs
     cases o with
-    | failed e m => simp [itemOf] at hs
+    | failed e m => simp [itemOf] at hi
     | fetched o =>
-      simp only [itemOf] at hs
-      split at hs
+      simp only [itemOf] at hi
+      split at hi
       · rename_i d' hb
-        simp only [Except.ok.injEq] at hs
-        exact ⟨_, o, hs ▸ hb⟩
-      · simp at hs
+        simp only [Except.ok.injEq] at hi
+        exact ⟨sl, hsl, o, hi ▸ hb, hm⟩
+      · simp at hi
   · simp at hs
+
+theorem jobItems_ok {h : Host} {cfg : Cfg} {j : Job} {d : Delivered} (hd : .ok d ∈ jobItems h cfg j) :
+    ∃ u o, NapResource.bytes (envOf h o) cfg.pol u = .ok d := by
+  obtain ⟨sl, -, o, hb, -⟩ := jobItems_slot hd
+  exact ⟨_, o, hb⟩
 
 /-- SSRF: no delivered byte came through a private, loopback, link-local, ULA or
 metadata address on any hop the host reported; redirects and size were within
-policy; MIME is sniffed from the delivered bytes and never raw SVG. -/
+policy; MIME is sniffed from the delivered bytes, never raw SVG, and on the
+scheme-appropriate allowlist (`Cfg.mimeAllowed`). -/
 theorem jobItems_policy {h : Host} {cfg : Cfg} {j : Job} {d : Delivered} (hd : .ok d ∈ jobItems h cfg j) :
     ∃ o : FetchOutcome, (∀ ip ∈ o.hops, isPrivate ip = false) ∧ o.hops.length ≤ cfg.pol.maxRedirects + 1 ∧
       (∃ b, o.body = some b ∧ b.length ≤ cfg.pol.maxBytes) ∧
-      d.mime ≠ svgMime ∧ d.mime = h.sniff d.blob := by
-  obtain ⟨u, o, hb⟩ := jobItems_ok hd
+      d.mime ≠ svgMime ∧ d.mime = h.sniff d.blob ∧
+      ∃ sl ∈ j.slots, ∃ sc, schemeOf (norm sl.url) = some sc ∧ cfg.mimeAllowed sc d.mime = true := by
+  obtain ⟨sl, hsl, o, hb, hm⟩ := jobItems_slot hd
+  obtain ⟨hn, hs⟩ := bytes_mime_sniffed_not_svg hb
   exact ⟨o, bytes_no_private_hop hb, bytes_redirects_capped hb, bytes_size_capped hb,
-    bytes_mime_sniffed_not_svg hb⟩
+    hn, hs, sl, hsl, hm⟩
 
 /-- A delivered `blossom:` item matched its content hash. -/
 theorem itemOf_blossom {h : Host} {pol : Policy} {url : String} {o : FetchOutcome} {d : Delivered}
@@ -1109,6 +1180,33 @@ def sends (es : List Eff) : List Json := es.filterMap fun | .send _ m => some m 
   | _ => false
 #guard decode (Json.parse! "{ \"type\": \"resource.stream\", \"id\": \"x\" }") matches .unknown
 #guard decode (Json.parse! "{ \"type\": \"resource.cancel\" }") matches .reject []
+
+-- Scheme-appropriate MIME allowlist: a sniffed type off the list is `blocked-by-policy`.
+def sniffHost : Host :=
+  { sampleHost with sniff := fun b => if b = [60] then "text/html" else "Image/PNG; x=1" }
+#guard match run (Json.parse! "{ \"type\": \"resource.bytes\", \"id\": \"r5\", \"url\": \"https://example.com/a\" }") with
+  | (s, [_]) =>
+    match sends (onReply sniffHost sampleWorld s 0 (.fetched ⟨[.v4 93 184 216 34], some [60], false, "image/png"⟩)).2 with
+    | [m] => Json.same m (Json.parse! "{ \"type\": \"resource.bytes.error\", \"id\": \"r5\", \"error\": \"blocked-by-policy\" }")
+    | _ => false
+  | _ => false
+#guard match run (Json.parse! "{ \"type\": \"resource.bytes\", \"id\": \"r6\", \"url\": \"https://example.com/a\" }") with
+  | (s, [_]) =>
+    match sends (onReply sniffHost sampleWorld s 0 (.fetched ⟨[.v4 93 184 216 34], some [1], false, ""⟩)).2 with
+    | [m] => Json.same m (Json.parse! "{ \"type\": \"resource.bytes.result\", \"id\": \"r6\", \"blob\": \"AQ==\", \"mime\": \"Image/PNG; x=1\" }")
+    | _ => false
+  | _ => false
+-- `nostr:` resolves to event JSON; an image or octet stream is refused.
+#guard match run (Json.parse! "{ \"type\": \"resource.bytes\", \"id\": \"r7\", \"url\": \"nostr:npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg\" }") with
+  | (s, [_]) =>
+    match sends (onReply sampleHost sampleWorld s 0 (.fetched ⟨[], some [1], false, ""⟩)).2 with
+    | [m] => Json.same m (Json.parse! "{ \"type\": \"resource.bytes.error\", \"id\": \"r7\", \"error\": \"blocked-by-policy\" }")
+    | _ => false
+  | _ => false
+#guard mimeEssence " Text/Plain ; charset=utf-8" == "text/plain"
+#guard defaultMimeAllowed .https "image/webp" && !defaultMimeAllowed .https "text/html" &&
+  !defaultMimeAllowed .data "application/javascript" && defaultMimeAllowed .nostr "application/json" &&
+  !defaultMimeAllowed .nostr "image/png"
 
 -- URL grammar.
 #guard htreeOk "htree://npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg/my%2Ftree/a/b.png#k=0000000000000000000000000000000000000000000000000000000000000000"

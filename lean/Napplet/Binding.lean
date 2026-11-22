@@ -34,6 +34,16 @@ What runs inside the iframe before and around napplet code (NIP-5D §Transport,
   the record once). `register` hands the retained messages to the new handler in
   arrival order (`register_delivers_buffer`). Other pushes with no handler are
   dropped, which the specs allow (for example `theme.changed` with no `onChanged`).
+* **Sticky records.** `shell.init` (NAP-SHELL `onReady`, `ready`, `services`),
+  `inc.channel.closed` (NAP-INC `onClosed`) and `media.session.ended` (NAP-MEDIA
+  `onEnded`) are retained until the endpoint is destroyed, not until the first
+  handler: they are kept in `sticky` whether or not a handler is registered, and
+  *every* later `register` for their key replays each of them once without removing
+  it (`sticky_every_later_registration`).
+* **Retired media sessions.** After `media.session.ended` for a `sessionId`, later
+  `media.state`, `media.capabilities`, `media.command` and `media.controls` for that
+  session are discarded (NAP-MEDIA: "The binding MUST discard late messages for it";
+  `retired_discarded`).
 * **Convention URIs.** `NapIntent.bindUri` (in `Nap/Intent.lean`) is the binding's
   convention URI normalisation for `intent.invoke` and `inc.emit`.
 * **Sidecar hydration.** `relay.event` / `outbox.event` results with
@@ -54,6 +64,13 @@ structure Key where
 def retainedTypes : List String :=
   ["intent.deliver", "inc.channel.opened", "inc.channel.event", "inc.channel.closed",
    "shell.init", "media.session.ended"]
+
+/-- Retained pushes kept for every later handler until the endpoint is destroyed. -/
+def stickyTypes : List String := ["shell.init", "inc.channel.closed", "media.session.ended"]
+
+/-- Session-scoped media pushes discarded once their session is retired. -/
+def retiredLateTypes : List String :=
+  ["media.state", "media.capabilities", "media.command", "media.controls"]
 
 /-- The routing field a push type carries, if any. -/
 def routeField : String → Option String
@@ -103,8 +120,15 @@ structure St where
   buffer : List (Key × Json)
   /-- Resource cache hydrated from sidecars: URL ↦ entry JSON. -/
   cache : List (String × Json)
+  /-- Sticky records (`stickyTypes`), oldest first; never removed before teardown. -/
+  sticky : List (Key × Json) := []
 
-def St.init : St := ⟨false, 0, [], [], [], []⟩
+def St.init : St := ⟨false, 0, [], [], [], [], []⟩
+
+/-- `k` is a late session-scoped media push for a session already retired. -/
+def St.retired (s : St) (k : Key) : Bool :=
+  k.type ∈ retiredLateTypes && k.route.isSome &&
+    s.sticky.any (·.1 == { type := "media.session.ended", route := k.route })
 
 /-! ### Bootstrap -/
 
@@ -207,14 +231,19 @@ where
   pushIn (s : St) (t : String) (m : Json) : St × List App :=
     let k : Key := { type := t, route := (routeField t).bind m.getStr? }
     let s := if t = "relay.event" || t = "outbox.event" then { s with cache := hydrate s.cache m } else s
-    if s.handlers.contains k then (s, [.push k m])
+    if s.retired k then (s, [])
+    else if t ∈ stickyTypes then
+      ({ s with sticky := s.sticky ++ [(k, m)] }, if s.handlers.contains k then [.push k m] else [])
+    else if s.handlers.contains k then (s, [.push k m])
     else if t ∈ retainedTypes then ({ s with buffer := s.buffer ++ [(k, m)] }, [])
     else (s, [])
 
-/-- Register a push handler; retained messages for it are delivered at once, in order. -/
+/-- Register a push handler; retained messages for it are delivered at once, in order:
+buffered ones are handed over and removed, sticky ones are replayed and kept. -/
 def register (s : St) (k : Key) : St × List App :=
   ({ s with handlers := k :: s.handlers, buffer := s.buffer.filter (·.1 != k) },
-   (s.buffer.filter (·.1 == k)).map fun (k', m) => .push k' m)
+   (s.buffer.filter (·.1 == k)).map (fun (k', m) => .push k' m) ++
+   (s.sticky.filter (·.1 == k)).map fun (k', m) => .push k' m)
 
 /-! ### Properties -/
 
@@ -237,25 +266,112 @@ theorem resolve_once (s : St) (id t : String) (m m' : Json) (r : St × List App)
   · simp at h
 
 /-- A retained push is not lost: registering its handler delivers every retained
-message for that key, in arrival order, and clears them from the buffer. -/
+message for that key, in arrival order (buffered, then sticky), clears the buffered
+ones and keeps the sticky ones. -/
 theorem register_delivers_buffer (s : St) (k : Key) :
-    (register s k).2 = (s.buffer.filter (·.1 == k)).map (fun (k', m) => App.push k' m) ∧
-    ∀ e ∈ (register s k).1.buffer, e.1 ≠ k := by
-  refine ⟨rfl, ?_⟩
+    (register s k).2 = (s.buffer.filter (·.1 == k)).map (fun (k', m) => App.push k' m) ++
+      (s.sticky.filter (·.1 == k)).map (fun (k', m) => App.push k' m) ∧
+    (∀ e ∈ (register s k).1.buffer, e.1 ≠ k) ∧ (register s k).1.sticky = s.sticky := by
+  refine ⟨rfl, ?_, rfl⟩
   intro e he
   simp [register] at he
   exact he.2
 
-/-- Retained pushes wait in the buffer when no handler is registered. -/
+/-- Retained (non-sticky) pushes wait in the buffer when no handler is registered. -/
 theorem retained_buffered (s : St) (t : String) (m : Json) (ht : t ∈ retainedTypes)
+    (hs : t ∉ stickyTypes)
     (hn : ¬ s.handlers.contains { type := t, route := (routeField t).bind m.getStr? }) :
     ((receive.pushIn s t m).1.buffer.map (·.2)).getLast? = some m := by
   have hn' : { type := t, route := (routeField t).bind m.getStr? } ∉ s.handlers := by
     simpa using hn
+  have hnr : ∀ s' : St, s'.retired { type := t, route := (routeField t).bind m.getStr? } = false := by
+    intro s'
+    simp only [St.retired, retiredLateTypes, retainedTypes] at ht ⊢
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl | rfl | rfl | rfl <;> simp
   unfold receive.pushIn
   by_cases hr : (t = "relay.event" || t = "outbox.event") = true
-  · simp [hr, hn', ht]
-  · simp [hr, hn', ht]
+  · simp [hr, hn', ht, hs, hnr]
+  · simp [hr, hn', ht, hs, hnr]
+
+/-- A sticky push is recorded as the newest sticky record, handler or not. -/
+theorem sticky_retained (s : St) (t : String) (m : Json) (ht : t ∈ stickyTypes) :
+    ((receive.pushIn s t m).1.sticky.map (·.2)).getLast? = some m := by
+  have hnr : ∀ s' : St, s'.retired { type := t, route := (routeField t).bind m.getStr? } = false := by
+    intro s'
+    simp only [St.retired, retiredLateTypes, stickyTypes] at ht ⊢
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl <;> simp
+  unfold receive.pushIn
+  by_cases hr : (t = "relay.event" || t = "outbox.event") = true
+  · simp [hr, ht, hnr]
+  · simp [hr, ht, hnr]
+
+theorem pushIn_sticky_mono (s : St) (t : String) (m : Json) (e : Key × Json) (he : e ∈ s.sticky) :
+    e ∈ (receive.pushIn s t m).1.sticky := by
+  unfold receive.pushIn
+  dsimp only
+  repeat' split
+  all_goals first | exact he | simp [he]
+
+/-- Receiving never removes a sticky record. -/
+theorem receive_keeps_sticky (s : St) (m : Json) (e : Key × Json) (he : e ∈ s.sticky) :
+    e ∈ (receive s m).1.sticky := by
+  unfold receive
+  split
+  · split
+    · rename_i hs
+      unfold settle at hs
+      split at hs
+      · simp at hs; rw [← hs]; exact he
+      · simp at hs
+    · exact pushIn_sticky_mono _ _ _ _ he
+  · exact pushIn_sticky_mono _ _ _ _ he
+  · exact he
+
+/-- One step of napplet-side activity: a message arrives, or code registers a handler. -/
+def step (s : St) : Json ⊕ Key → St
+  | .inl m => (receive s m).1
+  | .inr k => (register s k).1
+
+/-- A sticky record (`shell.init`, `inc.channel.closed`, `media.session.ended`) is
+delivered to every later registration for its key, however many messages and
+registrations (including earlier ones for the same key) came in between. -/
+theorem sticky_every_later_registration (s : St) (e : Key × Json) (he : e ∈ s.sticky)
+    (steps : List (Json ⊕ Key)) :
+    App.push e.1 e.2 ∈ (register (steps.foldl step s) e.1).2 := by
+  have hk : e ∈ (steps.foldl step s).sticky := by
+    induction steps generalizing s with
+    | nil => exact he
+    | cons x xs ih =>
+      apply ih
+      cases x with
+      | inl m => exact receive_keeps_sticky _ _ _ he
+      | inr k => exact he
+  simp only [register, List.mem_append, List.mem_map, List.mem_filter, beq_iff_eq]
+  exact .inr ⟨e, ⟨hk, rfl⟩, rfl⟩
+
+/-- After `media.session.ended` for a session, a later `media.state`,
+`media.capabilities`, `media.command` or `media.controls` for it is discarded:
+nothing reaches napplet code and nothing is buffered. -/
+theorem retired_discarded (s : St) (t sid : String) (m : Json) (ht : t ∈ retiredLateTypes)
+    (hr : m.getStr? "sessionId" = some sid)
+    (hend : ∃ j, ({ type := "media.session.ended", route := some sid }, j) ∈ s.sticky) :
+    (receive.pushIn s t m).2 = [] ∧ (receive.pushIn s t m).1.buffer = s.buffer ∧
+      (receive.pushIn s t m).1.sticky = s.sticky := by
+  obtain ⟨j, hj⟩ := hend
+  have hroute : (routeField t).bind m.getStr? = some sid := by
+    simp only [retiredLateTypes, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl | rfl <;> simp [routeField, hr]
+  have hret : s.retired { type := t, route := (routeField t).bind m.getStr? } = true := by
+    simp only [St.retired, hroute, Option.isSome_some, Bool.and_true, Bool.and_eq_true,
+      decide_eq_true_eq, List.any_eq_true, beq_iff_eq]
+    exact ⟨ht, _, hj, rfl⟩
+  have hne : ¬ (t = "relay.event" || t = "outbox.event") = true := by
+    simp only [retiredLateTypes, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl | rfl <;> decide
+  unfold receive.pushIn
+  simp [hne, hret]
 
 /-- The bootstrap is the only thing that sends a window message, and it sends only
 `napplet.hello`. -/
@@ -272,5 +388,35 @@ theorem window_only_hello (s : St) (w : Window) (h : w ∈ (boot s).2) : w = .he
 #guard
   let s := (receive St.init (Json.parse! "{\"type\":\"intent.deliver\",\"delivery\":{\"sender\":\"x\",\"archetype\":\"a\",\"action\":\"open\",\"convention\":\"napplet:a/open\"}}")).1
   (register s { type := "intent.deliver" }).2.length == 1
+-- NAP-SHELL: every late `onReady` gets the retained `shell.init` (not only the first)
+#guard
+  let s := (receive St.init (Json.parse! "{\"type\":\"shell.init\",\"services\":[]}")).1
+  let (s, o1) := register s { type := "shell.init" }
+  let (_, o2) := register s { type := "shell.init" }
+  (o1.length, o2.length) == (1, 1)
+-- NAP-INC: every late `onClosed` gets the terminal record
+#guard
+  let s := (receive St.init (Json.parse! "{\"type\":\"inc.channel.closed\",\"channelId\":\"c1\",\"reason\":\"closed\"}")).1
+  let k : Key := { type := "inc.channel.closed", route := some "c1" }
+  let (s, o1) := register s k
+  let (_, o2) := register s k
+  (o1.length, o2.length) == (1, 1)
+-- NAP-MEDIA M1: `onEnded` registered before and after retirement; each new handler gets it once
+#guard
+  let k : Key := { type := "media.session.ended", route := some "s1" }
+  let (s, _) := register St.init k
+  let (s, live) := receive s (Json.parse! "{\"type\":\"media.session.ended\",\"sessionId\":\"s1\",\"reason\":\"destroyed\"}")
+  let (s, o1) := register s k
+  let (_, o2) := register s k
+  (live.length, o1.length, o2.length) == (1, 1, 1)
+-- NAP-MEDIA M2: late messages for a retired session are discarded
+#guard
+  let ks : Key := { type := "media.state", route := some "s1" }
+  let (s, _) := register St.init ks
+  let (s, before) := receive s (Json.parse! "{\"type\":\"media.state\",\"sessionId\":\"s1\"}")
+  let s := (receive s (Json.parse! "{\"type\":\"media.session.ended\",\"sessionId\":\"s1\",\"reason\":\"destroyed\"}")).1
+  let (_, after) := receive s (Json.parse! "{\"type\":\"media.state\",\"sessionId\":\"s1\"}")
+  let (_, other) := receive s (Json.parse! "{\"type\":\"media.state\",\"sessionId\":\"s2\"}")
+  (before.length, after.length, other.length) == (1, 0, 0)
 
 end Napplet.Binding

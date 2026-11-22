@@ -30,9 +30,11 @@ NAP-INTENT §Manifest Catalog Contract:
 
 * a contract for role `r` is an `i` tag whose convention parses as
   `napplet:<r>/<action>` (`NapIntent.validIdent`) on an entry that also has `["z", r]`;
-  its `params` are the tag's remaining values; tag order is irrelevant;
-* a candidate for `r` is an entry with at least one such contract; its `conventions`
-  and `actions` are derived from its contracts without duplicates;
+  its `params` are the tag's remaining values; tag order is irrelevant; every valid
+  `i` tag yields its own contract, even when two share a convention;
+* a candidate for `r` is a dispatchable entry (`Entry.dispatchable`) with at least one
+  such contract; its `conventions` and `actions` are derived from its contracts without
+  duplicates;
 * `handlers()` covers every role that has a candidate.
 
 User defaults (one per archetype) are shell state fed by `HostEvent.nap .intent
@@ -43,7 +45,8 @@ User defaults (one per archetype) are shell state fed by `HostEvent.nap .intent
 
 1. `request` fields of the wrong JSON type: `{ok: false, error: "invalid convention"}`.
    `convention` must be exactly `napplet:<archetype>/<action>` with valid name
-   segments, else `"invalid convention"`.
+   segments, and a `handlerHint`, if present, must name a kind-35129 address
+   `35129:<64 lowercase hex>:<non-empty d>` (`addressOk`), else `"invalid convention"`.
 2. No candidate for the archetype: `"no handler"`. Candidates, none of which has a
    contract with exactly this convention: `"unsupported convention"`.
 3. Selection (`NapIntent.resolve` precedence) among the compatible candidates:
@@ -72,14 +75,20 @@ without a string `id` is dropped.
 /-! ## Host operations
 
 * `HostEvent.nap .intent "catalog" {"entries": [Entry]}` where
-  `Entry = {"id": text, "title"?: text, "z": [text], "i": [[text, ...]]}`. The complete
+  `Entry = {"id": text, "title"?: text, "z": [text], "i": [[text, ...]], "dispatchable"?: bool}`. The complete
   installed catalog, replacing the previous one. Contract: one entry per verified
   installed NIP-5D napplet manifest (kinds 5129, 15129, 35129; signature and artifact
   verified per NIP-5D); `id` is that manifest's catalog id exactly as
   `Identity.catalogId` computes it (`nip5d:35129:<pubkey>:<d>`, `nip5d:15129:<pubkey>`,
   `nip5d:5129:<event id>`), so it equals `Ctx.catalogId` of the running napplet;
   `title` is the manifest's title, if any; `z` lists the values of its `z` tags and `i`
-  the full value lists (after the tag name) of its `i` tags, in tag order. The host
+  the full value lists (after the tag name) of its `i` tags, in tag order.
+  `dispatchable` (default `true`) is `false` when the shell would not admit the
+  manifest as a delivery target: its `R` set (capability requirements) cannot be met,
+  or shell policy would load it without `intent` exposed (NAP-INTENT: "The runtime
+  MUST apply the manifest capability requirements and its own policy before accepting
+  delivery"). Such an entry is never a candidate, so no invocation is accepted for
+  it. The host
   sends it at start-up and whenever the installed set changes. A malformed payload is
   ignored. The runtime pushes `intent.changed` for every role whose availability changed.
 * `HostEvent.nap .intent "default" {"archetype": text, "handler": text | null}`: the user
@@ -135,6 +144,9 @@ structure Entry where
   roles : List String
   /-- `i` tag values: convention followed by advertised parameter names. -/
   intents : List (List String)
+  /-- The shell would admit this manifest as a delivery target (its `R` set is met
+  and policy exposes `intent`). Host-set; only dispatchable entries are candidates. -/
+  dispatchable : Bool := true
   deriving DecidableEq, Repr
 
 structure Contract where
@@ -160,17 +172,16 @@ def parseConv (c : String) : Option (String × String) :=
     | _ => none
   else none
 
-/-- Eligible contracts of an entry for role `r`, first contract per convention. -/
+/-- Eligible contracts of an entry for role `r`: one per valid `i` tag, in tag order. -/
 def Entry.contracts (e : Entry) (r : String) : List Contract :=
   if r ∈ e.roles then
-    (e.intents.filterMap fun t =>
+    e.intents.filterMap fun t =>
       match t with
       | c :: ps =>
         match parseConv c with
         | some (a, _) => if a = r then some (Contract.mk c ps) else none
         | none => none
-      | [] => none).foldl
-      (fun acc c => if acc.any (·.convention == c.convention) then acc else acc ++ [c]) []
+      | [] => none
   else []
 
 def Candidate.conventions (c : Candidate) : List String := dedupStr (c.contracts.map (·.convention))
@@ -237,11 +248,12 @@ def St.defaultFor (s : St) (r : String) : Option String :=
 def candidates (s : St) (r : String) : List Candidate :=
   s.catalog.filterMap fun e =>
     let cs := e.contracts r
-    if cs.isEmpty then none else some ⟨e.id, e.title, cs, s.defaultFor r == some e.id⟩
+    if !e.dispatchable || cs.isEmpty then none else some ⟨e.id, e.title, cs, s.defaultFor r == some e.id⟩
 
 /-- Every role with at least one candidate. -/
 def roles (s : St) : List String :=
-  dedupStr (s.catalog.flatMap fun e => e.roles.filter fun r => !(e.contracts r).isEmpty)
+  dedupStr (s.catalog.flatMap fun e =>
+    if e.dispatchable then e.roles.filter fun r => !(e.contracts r).isEmpty else [])
 
 def compatible (s : St) (r : Request) : List Candidate :=
   (candidates s r.archetype).filter fun c => c.contracts.any (·.convention == r.convention)
@@ -362,11 +374,6 @@ def encodeReq : Req → Json
 
 /-! ### Component -/
 
-/-- NAP-INTENT §Convention URI normalization: `convention` is exactly
-`napplet:<archetype>/<action>` with valid segments (`NapIntent.conventionOk` + `validIdent`). -/
-def convOk (r : Request) : Bool :=
-  r.convention == "napplet:" ++ r.archetype ++ "/" ++ r.action && validIdent r.convention.toList
-
 def selection (r : Request) : Selection :=
   match r.handler with
   | none => .auto
@@ -385,6 +392,14 @@ def addressOk (a : String) : Bool :=
       match rest.drop 64 with
       | ':' :: d => !d.isEmpty
       | _ => false
+
+/-- NAP-INTENT §Convention URI normalization: `convention` is exactly
+`napplet:<archetype>/<action>` with valid segments (`NapIntent.conventionOk` + `validIdent`),
+and a `handlerHint`, if present, names a kind-35129 address (`IntentHandlerHint`
+"accepts kind `35129` only"; an invalid hint makes the request invalid). -/
+def convOk (r : Request) : Bool :=
+  r.convention == "napplet:" ++ r.archetype ++ "/" ++ r.action && validIdent r.convention.toList &&
+    r.hint.all (addressOk ·.address)
 
 /-- A recommendation's catalog id (`Identity.catalogId` of a named manifest). -/
 def hintId (h : Hint) : Option String :=
@@ -496,7 +511,8 @@ def onReply (_h : Host) (w : World) (s : St) (n : Nat) (rep : Reply) : St × Lis
 
 def entryOf? (j : Json) : Option Entry := do
   some { id := ← j.getStr? "id", title := ← optField j "title" Json.asStr?,
-         roles := ← (j.get? "z").bind Json.asStrs?, intents := ← (j.get? "i").bind Json.asTags? }
+         roles := ← (j.get? "z").bind Json.asStrs?, intents := ← (j.get? "i").bind Json.asTags?,
+         dispatchable := (← optField j "dispatchable" Json.asBool?).getD true }
 
 def catalogOf? (j : Json) : Option (List Entry) :=
   ((j.get? "entries").bind Json.asArr?).bind (·.mapM entryOf?)
@@ -865,6 +881,15 @@ private def sCat : St := (onEvent hst wFeed (onEvent hst wFeed .init catEv).1 de
 private def invI1 : Req := .invoke "i1"
   { archetype := "profile", action := "open", convention := "napplet:profile/open",
     payload := some (Json.parse! "{ \"pubkey\": \"abc123...\" }") }
+-- an invalid `handlerHint` address rejects the request instead of being ignored
+#guard sendsSame (handle hst wFeed ctxFeed sCat (.invoke "i7"
+    { archetype := "profile", action := "open", convention := "napplet:profile/open",
+      hint := some { address := "30023:abc:x" } })).2
+  [(1, "{ \"type\": \"intent.invoke.result\", \"id\": \"i7\", \"result\": { \"ok\": false, \"error\": \"invalid convention\" } }")]
+private def goodHint : Hint := { address := "35129:" ++ String.ofList (List.replicate 64 'a') ++ ":d" }
+private def reqGoodHint : Request :=
+  { archetype := "profile", action := "open", convention := "napplet:profile/open", hint := some goodHint }
+#guard convOk reqGoodHint
 #guard sendsSame ((handle hst wFeed ctxFeed sCat invI1).2.take 1)
   [(1, "{
      \"type\": \"intent.invoke.result\",
@@ -940,7 +965,26 @@ private def invChoose : Req := .invoke "i4"
   [(1, "{\"type\":\"intent.handlers.result\",\"id\":\"h1\",\"handlers\":[{\"archetype\":\"profile\",\"available\":true,\"candidates\":[{\"id\":\"nip5d:35129:pk:profile-viewer\",\"actions\":[\"open\"],\"conventions\":[\"napplet:profile/open\"],\"contracts\":[{\"convention\":\"napplet:profile/open\",\"params\":[\"pubkey\"]}]}],\"hasDefault\":false}]}")]
 
 -- an `i` tag whose role has no `z` tag is not a contract
-#guard (candidates { St.init with catalog := [⟨"x", none, [], [["napplet:profile/open"]]⟩] } "profile").isEmpty
+#guard (candidates { St.init with catalog := [⟨"x", none, [], [["napplet:profile/open"]], true⟩] } "profile").isEmpty
+
+-- one contract per valid `i` tag, even with a repeated convention; actions/conventions deduplicated
+private def eDup : Entry :=
+  { id := "x", title := none, roles := ["profile"],
+    intents := [["napplet:profile/open", "pubkey"], ["napplet:profile/open", "npub"]] }
+#guard (eDup.contracts "profile").length == 2
+#guard match candidates { St.init with catalog := [eDup] } "profile" with
+  | [c] => c.conventions == ["napplet:profile/open"] && c.actions == ["open"] &&
+      c.contracts.map (·.params) == [["pubkey"], ["npub"]]
+  | _ => false
+
+-- a non-dispatchable entry (R set unmet, or `intent` not exposed by policy) is no candidate
+private def sNoDispatch : St := (onEvent hst wFeed .init (.nap .intent "catalog" (Json.parse!
+  "{\"entries\":[{\"id\":\"v\",\"z\":[\"profile\"],\"i\":[[\"napplet:profile/open\"]],\"dispatchable\":false}]}"))).1
+#guard sNoDispatch.catalog.map (·.dispatchable) == [false]
+#guard (candidates sNoDispatch "profile").isEmpty && (roles sNoDispatch).isEmpty
+#guard sendsSame (handle hst wFeed ctxFeed sNoDispatch invI1).2
+  [(1, "{ \"type\": \"intent.invoke.result\", \"id\": \"i1\", \"result\": { \"ok\": false, \"error\": \"no handler\" } }")]
+#guard (catalogOf? (Json.parse! "{\"entries\":[{\"id\":\"v\",\"z\":[],\"i\":[]}]}")).map (·.map (·.dispatchable)) == some [true]
 
 end vectors
 

@@ -65,6 +65,10 @@ Effects (`Effect.nap .media op args`, fire-and-forget):
 * `register {sessionId, window, metadata?, context?, capabilities}`: show a
   **napplet-owned** session on the media surface (metadata, media keys, OS integration).
   No source is passed; the host MUST NOT fetch or play anything for it.
+  For both, `context` (`MediaSessionContext`) is display data only: the host ignores
+  link relations it does not know, treats a link without `nostr.relays` as valid,
+  SHOULD validate Nostr references before using them, and never takes fetch authority
+  or ownership from it.
 * `update {sessionId, metadata}`: merge `metadata` (a partial `MediaMetadata`) into the
   displayed metadata; only the given fields change.
 * `state {sessionId, status, position?, duration?, volume?, reason?}`: a napplet-owned
@@ -104,6 +108,9 @@ Events (`HostEvent.nap .media ev args`):
 * `retire {sessionId, reason}`: the host has already stopped the session's output and
   retires it (`preempted`, `ended`, `error`, `backend-exited`, `user`, `policy`; an
   unknown reason is treated as `policy`). The runtime sends the one `media.session.ended`.
+  When the host retires a session because its source completed, `retire` with reason
+  `ended` is the sole notification of that completion: it MUST NOT also send a `state`
+  event with reason `ended` for it.
 
 Events naming an unknown or retired `sessionId` are ignored.
 -/

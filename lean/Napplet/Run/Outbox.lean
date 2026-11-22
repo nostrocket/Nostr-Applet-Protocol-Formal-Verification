@@ -6,6 +6,7 @@ https://mozilla.org/MPL/2.0/.
 
 import Napplet.Component
 import Napplet.Nap.Outbox
+import Napplet.Net
 
 /-!
 # NAP-OUTBOX runtime component
@@ -68,8 +69,18 @@ ending the stream (`closed`), as `Host` requires.
 ACL: `Cfg.canRead` gates reads and relay discovery (`"policy denied"`), `Cfg.canWrite`
 gates publishing (`"publish denied"`); no user gives `"no signer configured"`. Content that
 looks like napplet ciphertext is never signed (`"blocked: ciphertext from napplet"`,
-NIP-5D §Security 7). `outbox.close` (and a replaced `subId`) is answered with
-`outbox.closed {subId}` (kehto does the same).
+NIP-5D §Security 7). A template whose raw `event` carries a string `pubkey` other
+than the shell user's is refused with `"publish denied"` instead of being re-stamped
+(NAP-POW: a mined event is signed verbatim or rejected; the template codec drops
+`pubkey`, so it is read from the raw JSON as `Req.publish … pk`). `outbox.close` is
+answered with `outbox.closed {subId}` (kehto does the same); an `outbox.subscribe` that
+reuses a live `subId` stops the earlier subscription silently, with no `outbox.closed`.
+
+Relay URLs (NIP-65 lists, `options.relays` hints, fallbacks) pass `Cfg.allowed`, by
+default `Net.relayAllowed`: `wss://`, no localhost/`.local`/`.home.arpa` or dotless
+names, no private or reserved IP literals (NAP-OUTBOX: napplets MUST NOT force
+connections to private network relays). DNS names that resolve to private addresses are
+refused by the host (`Napplet.Host`).
 
 Malformed requests: bad `filters`/`eventId` → `"invalid filter"` (upstream error string),
 anything else → `"invalid request"`, in the request's result envelope (`events: []` for
@@ -100,7 +111,7 @@ structure Cfg where
   canRead : Identity → Bool := fun _ => true
   canWrite : Identity → Bool := fun _ => true
   /-- Relay URL policy (valid, allowed, not a private host). -/
-  allowed : String → Bool := fun u => u.startsWith "wss://"
+  allowed : String → Bool := Net.relayAllowed
   /-- Configured fallback relays (reads and the user's own write set only). -/
   fallback : List String := []
   /-- Attach `sidecar.relayHints` with the observed relay. -/
@@ -142,7 +153,8 @@ inductive Req where
   | query (id : String) (filters : List Json) (o : Option ReadOpts)
   | subscribe (id subId : String) (filters : List Json) (o : Option ReadOpts)
   | close (id subId : String)
-  | publish (id : String) (t : EventTemplate) (o : Option PubOpts)
+  /-- `pk`: the string `pubkey` member of the raw `event`, if any. -/
+  | publish (id : String) (t : EventTemplate) (o : Option PubOpts) (pk : Option String)
   | resolveRelays (id : String) (t : Target)
   deriving DecidableEq, Repr
 
@@ -322,7 +334,7 @@ def decode (j : Json) : Decoded Req :=
         | _, none => .reject [queryErr id "invalid request"]
       else if t = "outbox.publish" then
         match templateOf? j, optField j "options" PubOpts.ofJson? with
-        | some tp, some o => .ok (.publish id tp o)
+        | some tp, some o => .ok (.publish id tp o ((j.get? "event").bind Net.claimedPubkey?))
         | _, _ => .reject [pubMsg id false none none (some "invalid request")]
       else
         match (j.get? "target").bind Target.ofJson? with
@@ -338,8 +350,9 @@ def encodeReq : Req → Json
       [("id", some (.str id)), ("subId", some (.str sid)), ("filters", some (.arr fs)),
        ("options", o.map ReadOpts.toJson)]
   | .close id sid => Json.msg "outbox.close" [("id", some (.str id)), ("subId", some (.str sid))]
-  | .publish id t o => Json.msg "outbox.publish"
-      [("id", some (.str id)), ("event", some t.toJson), ("options", o.map PubOpts.toJson)]
+  | .publish id t o pk => Json.msg "outbox.publish"
+      [("id", some (.str id)), ("event", some (Net.withPubkey t.toJson pk)),
+       ("options", o.map PubOpts.toJson)]
   | .resolveRelays id tg => Json.msg "outbox.resolveRelays"
       [("id", some (.str id)), ("target", some tg.toJson)]
 
@@ -532,8 +545,8 @@ def stepReq (h : Host) (w : World) (cx : Ctx) (cfg : Cfg) (nx : Nat) (b : Bucket
   | .close _ sid =>
     let st := stopSub b sid
     (st.1, st.2 ++ [.send cx.port (closedMsg sid none)], nx)
-  | .publish id t o =>
-    if !cfg.canWrite cx.identity then
+  | .publish id t o pk =>
+    if !cfg.canWrite cx.identity || !Net.pubkeyOk w.user pk then
       (b, [.send cx.port (pubMsg id false none none (some "publish denied"))], nx)
     else if w.user = "" then
       (b, [.send cx.port (pubMsg id false none none (some "no signer configured"))], nx)
@@ -678,9 +691,10 @@ theorem decode_encodeReq (r : Req) (hr : r.WF) : decode (encodeReq r) = .ok r :=
   | close id sid =>
     simp [decode, encodeReq, requestTypes, Json.msg, Json.mkObj, Json.getStr?, Json.get?,
       Json.lookup, reqId?]
-  | publish id t o =>
+  | publish id t o pk =>
     cases o <;> simp [decode, encodeReq, requestTypes, Json.msg, Json.mkObj, Json.getStr?,
-      Json.get?, Json.lookup, reqId?, optField, templateOf?, PubOpts.ofJson?_toJson]
+      Json.get?, Json.lookup, reqId?, optField, templateOf?, PubOpts.ofJson?_toJson,
+      Net.ofJson?_withPubkey, Net.claimedPubkey?_withPubkey]
   | resolveRelays id tg =>
     simp [decode, encodeReq, requestTypes, Json.msg, Json.mkObj, Json.getStr?, Json.get?,
       Json.lookup, reqId?, Target.ofJson?_toJson]
@@ -1191,6 +1205,30 @@ def rReq : String :=
 -- Teardown: cancel the outstanding lookups, stop subscriptions.
 #guard (drop (run (St.init) (Json.parse! p1Req) []).1 7).2 ==
   [.effect (.cancel (tag 1)), .effect (.cancel (tag 2))]
+
+
+-- A template claiming a pubkey other than the user's is refused, not re-stamped (NAP-POW).
+#guard oneSend (run (St.init) (Json.parse! "{ \"type\": \"outbox.publish\", \"id\": \"p4\", \"event\": { \"kind\": 1, \"pubkey\": \"other...\" } }") []).2
+  "{ \"type\": \"outbox.publish.result\", \"id\": \"p4\", \"ok\": false, \"error\": \"publish denied\" }"
+-- The user's own pubkey is accepted: lookups start as for any publish.
+#guard (run (St.init) (Json.parse! "{ \"type\": \"outbox.publish\", \"id\": \"p5\", \"event\": { \"kind\": 1, \"pubkey\": \"user...\" } }") []).2 ==
+  [.call (tag 1) (.relayList "user...")]
+
+-- Private, loopback and localhost relays are refused by the default policy (NAP-OUTBOX):
+-- as napplet hints ...
+#guard ["wss://127.0.0.1", "wss://localhost", "wss://[::1]", "wss://10.0.0.1:443", "wss://router"].all fun u =>
+  oneSend (run (St.init) (Json.parse! ("{ \"type\": \"outbox.publish\", \"id\": \"p3\", \"event\": { \"kind\": 1 }, \"options\": { \"toOutbox\": false, \"relays\": [\"" ++ u ++ "\"] } }")) []).2
+    "{ \"type\": \"outbox.publish.result\", \"id\": \"p3\", \"ok\": false, \"error\": \"relay list unavailable\" }"
+-- ... and in an author's NIP-65 list.
+#guard oneSend (run (St.init) (Json.parse! "{ \"type\": \"outbox.resolveRelays\", \"id\": \"r\", \"target\": { \"authors\": [\"ab12...\"] } }")
+    [(1, .relayList (some (both "wss://192.168.1.1" ++ both "wss://localhost" ++ both relayEx)))]).2
+  "{ \"type\": \"outbox.resolveRelays.result\", \"id\": \"r\", \"plan\": { \"relays\": [\"wss://relay.example.com\"], \"source\": \"nip65\" } }"
+
+-- Reusing a live `subId` replaces the subscription silently: no `outbox.closed`.
+#guard
+  let s1 := (run (St.init) (Json.parse! sReq) [(1, .relayList (some (both relayEx)))]).1
+  (run s1 (Json.parse! sReq) []).2 ==
+    [.effect (.unsubscribe (tag 0)), .call (tag 3) (.relayList "ab12...")]
 
 end Vectors
 

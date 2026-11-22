@@ -5,6 +5,7 @@ https://mozilla.org/MPL/2.0/.
 -/
 
 import Napplet.Basic
+import Napplet.Nip19
 
 /-!
 # Manifest verification (NIP-5D §Manifest, §Identity)
@@ -168,8 +169,30 @@ def scpLike (u : String) : Bool :=
     !hostPart.isEmpty && !path.isEmpty && !path.startsWith "//" && !hostPart.contains '/'
   | _ => false
 
+/-- A NIP-34 `nostr` clone location (`nostr:` or `nostr://` followed by a non-empty
+rest). NIP-5D: "A `nostr` location MUST identify a kind-30617 repository announcement":
+a rest that decodes as an `naddr` must carry kind 30617, else the location is
+unusable (and the `source` field is dropped); other NIP-34 forms
+(`<npub>/<identifier>`, with or without relay hint) are kept as given. -/
+def nostrSourceOk (u : String) : Bool :=
+  let rest := if u.startsWith "nostr://" then (u.drop 8).toString else (u.drop 6).toString
+  !rest.isEmpty &&
+    match Nip19.decodeNaddr rest with
+    | some a => a.kind == 30617
+    | none => true
+
 def sourceOk (u : String) : Bool :=
-  urlWithScheme ["http", "https", "ssh", "git", "nostr"] u || scpLike u
+  if u.startsWith "nostr:" then nostrSourceOk u
+  else urlWithScheme ["http", "https", "ssh", "git"] u || scpLike u
+
+-- `nostr` sources: an `naddr` must name a kind-30617 repository announcement
+#guard sourceOk ("nostr://" ++ Nip19.encodeNaddr { Nip19.sample with kind := 30617 } Nip19.author)
+#guard sourceOk ("nostr:" ++ Nip19.encodeNaddr { Nip19.sample with kind := 30617 } Nip19.author)
+#guard !sourceOk ("nostr://" ++ Nip19.encodeNaddr Nip19.sample Nip19.author)
+#guard !sourceOk ("nostr:" ++ Nip19.encodeNaddr { Nip19.sample with kind := 1 } Nip19.author)
+#guard sourceOk "nostr://npub1abc/my-repo"
+#guard !sourceOk "nostr:" && !sourceOk "nostr://"
+#guard sourceOk "https://example.com/repo.git" && sourceOk "git@example.com:repo.git"
 
 /-- `https:` URL without credentials or fragment. -/
 def archiveUrlOk (u : String) : Bool :=

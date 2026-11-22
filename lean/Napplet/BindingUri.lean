@@ -24,8 +24,10 @@ as the binding turns them into wire requests, before anything is posted:
   `options.handlerHint` is rejected;
 * `intent.open` additionally requires the intent segment to be `open`;
 * `inc.emit` transposes a convention URI's query into `payload` and sends the stable
-  topic; a topic that is not a `napplet:` convention URI is sent unchanged (topics
-  are opaque).
+  topic. Only a `napplet:` topic carrying a query (`?`) or fragment (`#`) goes through
+  `bindUri`; any other topic, including a queryless, fragment-free `napplet:` topic
+  with characters outside the convention segment syntax, is sent unchanged (NAP-INC:
+  the shell treats the complete topic as opaque text).
 
 The result is a builder taking the fresh request id (`Binding.request`).
 -/
@@ -81,7 +83,7 @@ def «open» (uri : String) (o : InvokeOptions) : Except UriError (String → Js
 
 /-- `inc.emit(topic, payload?)`: the wire message (fire-and-forget, no id). -/
 def emit (topic : String) (payload : Option Json) : Except UriError Json :=
-  if topic.startsWith "napplet:" then do
+  if topic.startsWith "napplet:" && (topic.toList.contains '?' || topic.toList.contains '#') then do
     let b ← (bindUri topic .other payload.isSome).mapError .bind
     let pl := if b.payload.isEmpty then payload else some (paramsJson b.payload)
     pure (Run.Inc.encodeReq (.emit (String.ofList b.identity) pl))
@@ -105,6 +107,13 @@ def emit (topic : String) (payload : Option Json) : Except UriError Json :=
       some ("35129:" ++ Nip19.sample.pubkey ++ ":my-napplet")
   | .error _ => false
 #guard («open» "napplet:feed/edit" {}) matches .error .notOpen
+-- queryless, fragment-free topics are opaque, even under `napplet:`
+#guard match emit "napplet:foo" none with
+  | .ok j => Json.same j (Json.parse! "{ \"type\": \"inc.emit\", \"topic\": \"napplet:foo\" }")
+  | .error _ => false
+#guard match emit "napplet:my feed/open" (some (.str "x")) with
+  | .ok j => Json.same j (Json.parse! "{ \"type\": \"inc.emit\", \"topic\": \"napplet:my feed/open\", \"payload\": \"x\" }")
+  | .error _ => false
 #guard match emit "shell:state-get" none with
   | .ok j => Json.same j (Json.parse! "{ \"type\": \"inc.emit\", \"topic\": \"shell:state-get\" }")
   | .error _ => false

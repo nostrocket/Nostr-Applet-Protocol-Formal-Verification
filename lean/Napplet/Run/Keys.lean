@@ -33,7 +33,8 @@ Behaviour.
   keystroke itself is never sent to any napplet.
 * `keys.registerAction` uses `NapKeys.register`: a duplicate `(napplet, action id)`
   gets `error: "duplicate action ID"`; otherwise the action is stored and bound to
-  `defaultKey` when that combo is not reserved and not bound by anyone, else left
+  `defaultKey` when that combo is not reserved (`Cfg.reservedSet`: `NapKeys.reserved`
+  plus the shell's `Cfg.browserReserved`) and not bound by anyone, else left
   unbound; the result carries the canonical `binding` when bound, and the
   napplet's complete `keys.bindings` follows. A malformed request (no `action`
   object, non-string `action.id`/`label`/`defaultKey`) or an unparseable
@@ -45,7 +46,17 @@ Behaviour.
 * Malformed `keys.forward` / `keys.unregisterAction` (fire-and-forget) and a
   `keys.registerAction` without a string `id`: dropped (`.reject []`).
 
-State: the bindings, owned by the registering endpoint (`mentions`). Teardown
+Reserved keys. Upstream reserves Tab, Shift+Tab, Escape and "browser-reserved
+shortcuts", naming Ctrl+W/T/L only as examples. The browser-reserved set is shell
+policy: `Cfg.browserReserved` (default `defaultBrowserReserved`, the Windows/Linux and
+macOS browser shortcuts) adds to `NapKeys.reserved`. The component invariant `Inv`
+(`handle_inv'`, `onEvent_inv'`, `drop_inv'`) says no combo of the full set is ever
+bound, so none is pushed in `keys.bindings` (`bindings_never_reserved'`), none is
+suppressed by a shim using that list (`reserved_never_suppressed'`), and none fires an
+action (`fire_reserved`).
+
+State: the bindings, owned by the registering endpoint (`mentions`), and the policy
+`cfg` (`St.init cfg`). Teardown
 removes every binding of the endpoint and tells the host.
 -/
 
@@ -53,6 +64,11 @@ removes every binding of the endpoint and tells the host.
 
 All host-facing arguments name the endpoint by `port` (the `PortId` of the bound
 port, which the host learned from `Output.bound`).
+
+The host supplies its platform's browser-reserved shortcuts as `Cfg.browserReserved`
+(default `defaultBrowserReserved`, the union of Windows/Linux and macOS browser
+shortcuts); together with Tab, Shift+Tab, Escape and Ctrl+W/T/L they are never bound,
+pushed in `keys.bindings`, or fired, and host rebinds to them are refused.
 
 * `Effect.nap .keys "input" {port, key, code, ctrl, alt, shift, meta}`: a keystroke
   the napplet forwarded. The host processes it as if it occurred in the shell's own
@@ -72,7 +88,8 @@ port, which the host learned from `Output.bound`).
   has registered the action.
 * `HostEvent.nap .keys "rebind" {port, actionId, key}`: the user changed the binding of
   a registered action; `key` is a combo string, or `null` to unbind. A combo that is
-  unparseable, reserved, or bound by any action is refused (nothing changes);
+  unparseable, reserved (`NapKeys.reserved` or `Cfg.browserReserved`), or bound by any
+  action is refused (nothing changes);
   otherwise the binding changes and the owner gets the new `keys.bindings`.
 -/
 
@@ -80,10 +97,56 @@ namespace Napplet.Run.Keys
 
 open NapKeys
 
+/-- One-character keys are matched case-insensitively (upper-cased). -/
+def normKey (k : String) : String := if k.length = 1 then k.toUpper else k
+
+/-- A combo with its key normalised as the runtime matches it (`normKey`). -/
+def normCombo (c : Combo) : Combo := { c with key := normKey c.key }
+
+/-- The default browser-reserved shortcuts: the union over the major desktop platforms
+of the shortcuts browsers intercept before page script (or never deliver to it), with
+`Ctrl` for Windows/Linux and `Meta` (Cmd) for macOS:
+* close / new / new window / location bar / quit / reload: `Ctrl`/`Meta` + `W`, `T`, `N`,
+  `L`, `Q`, `R`;
+* tab switching: `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+PageUp`, `Ctrl+PageDown`, and
+  `Meta+Tab` (macOS application switcher);
+* reopen closed tab / private window / close window: `Ctrl`/`Meta` + `Shift` + `T`, `N`,
+  `W`;
+* reload: `F5`, `Ctrl+F5`, `Ctrl+Shift+R`, `Meta+Shift+R`;
+* history: `Alt+ArrowLeft`, `Alt+ArrowRight`, `Meta+[`, `Meta+]`;
+* window: `Alt+F4`, `Meta+H`, `Meta+M`, `F11`.
+`NapKeys.reserved` (Tab, Shift+Tab, Escape, Ctrl+W/T/L) is always reserved as well. -/
+def defaultBrowserReserved : List Combo :=
+  (["W", "T", "N", "L", "Q", "R"].flatMap fun k =>
+    [{ ctrl := true, key := k }, { metaKey := true, key := k }]) ++
+  (["T", "N", "W", "R"].flatMap fun k =>
+    [{ ctrl := true, shift := true, key := k }, { shift := true, metaKey := true, key := k }]) ++
+  [{ ctrl := true, key := "Tab" }, { ctrl := true, shift := true, key := "Tab" },
+   { ctrl := true, key := "PageUp" }, { ctrl := true, key := "PageDown" },
+   { metaKey := true, key := "Tab" },
+   { key := "F5" }, { ctrl := true, key := "F5" }, { key := "F11" },
+   { alt := true, key := "ArrowLeft" }, { alt := true, key := "ArrowRight" },
+   { metaKey := true, key := "[" }, { metaKey := true, key := "]" },
+   { alt := true, key := "F4" }, { metaKey := true, key := "H" }, { metaKey := true, key := "M" }]
+
+/-- Shell keyboard policy. -/
+structure Cfg where
+  /-- Browser-reserved shortcuts of the shell's platform, in addition to
+  `NapKeys.reserved`. Never bound (from `defaultKey` or a rebind) and never fired.
+  Keys are compared after `normKey`, so `Ctrl+w` and `Ctrl+W` are the same entry. -/
+  browserReserved : List Combo := defaultBrowserReserved
+
+/-- The extra reserved combos, normalised as the runtime matches combos. -/
+def Cfg.extra (cfg : Cfg) : List Combo := cfg.browserReserved.map normCombo
+
+/-- Every combo the component treats as reserved. -/
+def Cfg.reservedSet (cfg : Cfg) : List Combo := reserved ++ cfg.extra
+
 structure St where
   ks : KeysState
+  cfg : Cfg := {}
 
-def St.init : St := ⟨⟨[]⟩⟩
+def St.init (cfg : Cfg := {}) : St := ⟨⟨[]⟩, cfg⟩
 
 inductive Req where
   | forward (key code : String) (ctrl alt shift metaKey : Bool)
@@ -92,9 +155,6 @@ inductive Req where
   deriving DecidableEq, Repr
 
 /-! ### Combo strings -/
-
-/-- One-character keys are matched case-insensitively (upper-cased). -/
-def normKey (k : String) : String := if k.length = 1 then k.toUpper else k
 
 /-- A trailing `++` is the `+` key. -/
 def fixPlus : List String → List String
@@ -187,6 +247,12 @@ def inputArgs (p : PortId) (k c : String) (ct al sh me : Bool) : Json :=
 def fire (s : KeysState) (c : Combo) : List Eff :=
   (s.bindings.filter (·.combo == some c)).map fun b => .send b.owner (actionJson b.actionId)
 
+/-- A `defaultKey` hint that names a browser-reserved combo is dropped before
+`NapKeys.register` (which already refuses `NapKeys.reserved`). -/
+def screen (cfg : Cfg) : Option Combo → Option Combo
+  | some c => if c ∈ cfg.extra then none else some c
+  | none => none
+
 def handle (_h : Host) (_w : World) (cx : Ctx) (s : St) : Req → St × List Eff
   | .forward k c ct al sh me =>
     (s, .effect (.nap .keys "input" (inputArgs cx.port k c ct al sh me)) ::
@@ -195,22 +261,22 @@ def handle (_h : Host) (_w : World) (cx : Ctx) (s : St) : Req → St × List Eff
     match dk.map comboOf? with
     | some none => (s, [.send cx.port (registerError id aid "invalid action")])
     | dk' =>
-      let (ks', outs) := register s.ks cx.port id aid label dk'.join
-      (⟨ks'⟩, outs.map encodeOut ++ [hostBindings ks' cx.port])
+      let (ks', outs) := register s.ks cx.port id aid label (screen s.cfg dk'.join)
+      ({ s with ks := ks' }, outs.map encodeOut ++ [hostBindings ks' cx.port])
   | .unregisterAction aid =>
     if s.ks.bindings.any (fun b => b.owner == cx.port && b.actionId == aid) then
       let (ks', outs) := unregister s.ks cx.port aid
-      (⟨ks'⟩, outs.map encodeOut ++ [hostBindings ks' cx.port])
+      ({ s with ks := ks' }, outs.map encodeOut ++ [hostBindings ks' cx.port])
     else (s, [])
 
 def onReply (_h : Host) (_w : World) (s : St) (_n : Nat) (_r : Reply) : St × List Eff := (s, [])
 
 /-- A user rebind: move the action to `key` (or unbind it). Refused when the combo
-is reserved or taken (`NapKeys.assign`). -/
+is reserved (`NapKeys.reserved` or `cfg.browserReserved`) or taken (`NapKeys.assign`). -/
 def others (s : KeysState) (p : PortId) (aid : String) : List NapKeys.Binding :=
   s.bindings.filter fun b => !(b.owner == p && b.actionId == aid)
 
-def rebind (s : KeysState) (p : PortId) (aid : String) (key : Option Combo) :
+def rebind (cfg : Cfg) (s : KeysState) (p : PortId) (aid : String) (key : Option Combo) :
     Option KeysState :=
   match s.bindings.find? (fun b => b.owner == p && b.actionId == aid) with
   | none => none
@@ -218,7 +284,7 @@ def rebind (s : KeysState) (p : PortId) (aid : String) (key : Option Combo) :
     match key with
     | none => some ⟨⟨p, aid, b.label, none⟩ :: others s p aid⟩
     | some c =>
-      match assign ⟨others s p aid⟩ (some c) with
+      match assign ⟨others s p aid⟩ (screen cfg (some c)) with
       | none => none
       | some c' => some ⟨⟨p, aid, b.label, some c'⟩ :: others s p aid⟩
 
@@ -242,15 +308,15 @@ def onEvent (_h : Host) (_w : World) (s : St) : HostEvent → St × List Eff
       | _ => none
     match (args.get? "port").bind Json.asNat?, args.getStr? "actionId", key with
     | some p, some aid, some k =>
-      match rebind s.ks p aid k with
-      | some ks' => (⟨ks'⟩, [.send p (bindingsJson (bindingsOf ks' p)), hostBindings ks' p])
+      match rebind s.cfg s.ks p aid k with
+      | some ks' => ({ s with ks := ks' }, [.send p (bindingsJson (bindingsOf ks' p)), hostBindings ks' p])
       | none => (s, [])
     | _, _, _ => (s, [])
   | _ => (s, [])
 
 def drop (s : St) (p : PortId) : St × List Eff :=
   let ks' : KeysState := ⟨s.ks.bindings.filter (·.owner != p)⟩
-  (⟨ks'⟩, if s.ks.bindings.any (·.owner == p) then [hostBindings ks' p] else [])
+  ({ s with ks := ks' }, if s.ks.bindings.any (·.owner == p) then [hostBindings ks' p] else [])
 
 def mentions (s : St) (p : PortId) : Bool := s.ks.bindings.any (·.owner == p)
 
@@ -274,8 +340,8 @@ theorem register_owners {s : KeysState} {p : PortId} {id aid label : String} {dk
     · exact .inr rfl
     · exact .inl hb
 
-theorem rebind_owners {s : KeysState} {p : PortId} {aid : String} {k : Option Combo}
-    {ks' : KeysState} (hr : rebind s p aid k = some ks') {b : NapKeys.Binding} (hb : b ∈ ks'.bindings) :
+theorem rebind_owners {cfg : Cfg} {s : KeysState} {p : PortId} {aid : String} {k : Option Combo}
+    {ks' : KeysState} (hr : rebind cfg s p aid k = some ks') {b : NapKeys.Binding} (hb : b ∈ ks'.bindings) :
     b ∈ s.bindings ∨ b.owner = p := by
   unfold rebind at hr
   split at hr
@@ -334,7 +400,7 @@ theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : Po
   simp only [mentions, List.any_eq_true, beq_iff_eq] at hm ⊢
   obtain ⟨b, hb, rfl⟩ := hm
   -- the only state change is a successful rebind of an action `p` already owns
-  have : ∀ p aid k ks', rebind s.ks p aid k = some ks' → b ∈ ks'.bindings →
+  have : ∀ p aid k ks', rebind s.cfg s.ks p aid k = some ks' → b ∈ ks'.bindings →
       ∃ x ∈ s.ks.bindings, x.owner = b.owner := by
     intro p aid k ks' hr hb'
     rcases rebind_owners hr hb' with hb' | ho
@@ -365,8 +431,8 @@ theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : Po
 
 /-! ### Properties: the binding invariant -/
 
-theorem rebind_inv {s : KeysState} (hi : NapKeys.Inv s) {p : PortId} {aid : String} {k : Option Combo}
-    {ks' : KeysState} (hr : rebind s p aid k = some ks') : NapKeys.Inv ks' := by
+theorem rebind_inv {cfg : Cfg} {s : KeysState} (hi : NapKeys.Inv s) {p : PortId} {aid : String} {k : Option Combo}
+    {ks' : KeysState} (hr : rebind cfg s p aid k = some ks') : NapKeys.Inv ks' := by
   have hrest : NapKeys.Inv ⟨others s p aid⟩ :=
     ⟨fun b hb => hi.no_reserved b (List.mem_filter.mp hb).1,
      fun b₁ h₁ b₂ h₂ => hi.unique b₁ (List.mem_filter.mp h₁).1 b₂ (List.mem_filter.mp h₂).1⟩
@@ -450,6 +516,201 @@ theorem bindings_never_reserved (h : Host) (w : World) (cx : Ctx) (s : St) (r : 
     (hi : NapKeys.Inv s.ks) (p : PortId) :
     ∀ x ∈ bindingsOf (handle h w cx s r).1.ks p, x.2 ∉ reserved :=
   suppress_list_safe (handle_inv h w cx s r hi) p
+
+/-! ### Properties: the extended reserved set
+
+`NapKeys.Inv` covers only `NapKeys.reserved`. The component invariant adds the shell's
+`cfg.browserReserved`, so the full reserved set is `cfg.reservedSet`. -/
+
+/-- Component invariant: `NapKeys.Inv`, and no binding on a configured browser-reserved
+combo. -/
+structure Inv (s : St) : Prop where
+  base : NapKeys.Inv s.ks
+  no_extra : ∀ b ∈ s.ks.bindings, ∀ c, b.combo = some c → c ∉ s.cfg.extra
+
+theorem Inv.init (cfg : Cfg) : Inv (St.init cfg) :=
+  ⟨⟨fun _ hb => by simp [St.init] at hb, fun _ hb => by simp [St.init] at hb⟩,
+   fun _ hb => by simp [St.init] at hb⟩
+
+/-- Under `Inv`, no bound combo is in the full reserved set. -/
+theorem Inv.no_reservedSet {s : St} (hi : Inv s) :
+    ∀ b ∈ s.ks.bindings, ∀ c, b.combo = some c → c ∉ s.cfg.reservedSet := by
+  intro b hb c hc hm
+  rcases List.mem_append.mp hm with hm | hm
+  · exact hi.base.no_reserved b hb c hc hm
+  · exact hi.no_extra b hb c hc hm
+
+theorem assign_eq {s : KeysState} {dk : Option Combo} {c : Combo} (h : assign s dk = some c) :
+    dk = some c := by
+  unfold assign at h
+  split at h
+  · split at h
+    · simp at h
+    · exact h
+  · simp at h
+
+theorem screen_safe {cfg : Cfg} {dk : Option Combo} {c : Combo} (h : screen cfg dk = some c) :
+    c ∉ cfg.extra := by
+  unfold screen at h
+  split at h
+  · split at h
+    · simp at h
+    · rename_i hc; cases h; exact hc
+  · simp at h
+
+theorem register_mem {s : KeysState} {p : PortId} {id aid label : String} {dk : Option Combo}
+    {b : NapKeys.Binding} (hb : b ∈ (register s p id aid label dk).1.bindings) :
+    b ∈ s.bindings ∨ b.combo = assign s dk := by
+  unfold register at hb
+  split at hb
+  · exact .inl hb
+  · rcases List.mem_cons.mp hb with rfl | hb
+    · exact .inr rfl
+    · exact .inl hb
+
+theorem rebind_mem {cfg : Cfg} {s : KeysState} {p : PortId} {aid : String} {k : Option Combo}
+    {ks' : KeysState} (hr : rebind cfg s p aid k = some ks') {b : NapKeys.Binding}
+    (hb : b ∈ ks'.bindings) : b ∈ s.bindings ∨ ∀ c, b.combo = some c → c ∉ cfg.extra := by
+  unfold rebind at hr
+  split at hr
+  · simp at hr
+  · split at hr
+    · simp only [Option.some.injEq] at hr; subst hr
+      rcases List.mem_cons.mp hb with rfl | hb
+      · exact .inr fun c hc => by simp at hc
+      · exact .inl (List.mem_filter.mp hb).1
+    · split at hr
+      · simp at hr
+      · rename_i c c' hc
+        simp only [Option.some.injEq] at hr; subst hr
+        rcases List.mem_cons.mp hb with rfl | hb
+        · refine .inr fun c₀ hc₀ => ?_
+          simp only [Option.some.injEq] at hc₀; subst hc₀
+          have := assign_eq hc
+          exact screen_safe this
+        · exact .inl (List.mem_filter.mp hb).1
+
+theorem handle_cfg (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) :
+    (handle h w cx s r).1.cfg = s.cfg := by
+  cases r with
+  | forward => rfl
+  | registerAction => simp only [handle]; split <;> rfl
+  | unregisterAction => simp only [handle]; split <;> rfl
+
+theorem onEvent_cfg (h : Host) (w : World) (s : St) (e : HostEvent) :
+    (onEvent h w s e).1.cfg = s.cfg := by
+  match e with
+  | .userChanged _ => rfl
+  | .themeChanged _ => rfl
+  | .nap d ev args =>
+    simp only [onEvent]
+    split
+    · split <;> rfl
+    · split
+      · split <;> rfl
+      · rfl
+    · split
+      · split <;> rfl
+      · rfl
+    · rfl
+
+/-- The component invariant is preserved by every request: neither `NapKeys.reserved`
+nor a configured browser-reserved combo is ever bound, and no combo is bound twice. -/
+theorem handle_inv' (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (hi : Inv s) :
+    Inv (handle h w cx s r).1 := by
+  refine ⟨handle_inv h w cx s r hi.base, ?_⟩
+  rw [handle_cfg]
+  intro b hb c hc
+  cases r with
+  | forward => exact hi.no_extra b hb c hc
+  | registerAction id aid label dk =>
+    simp only [handle] at hb
+    split at hb
+    · exact hi.no_extra b hb c hc
+    · rcases register_mem hb with hb | hb
+      · exact hi.no_extra b hb c hc
+      · rw [hc] at hb; exact screen_safe (assign_eq hb.symm)
+  | unregisterAction aid =>
+    simp only [handle] at hb
+    split at hb
+    · simp only [unregister, List.mem_filter] at hb; exact hi.no_extra b hb.1 c hc
+    · exact hi.no_extra b hb c hc
+
+theorem onEvent_inv' (h : Host) (w : World) (s : St) (e : HostEvent) (hi : Inv s) :
+    Inv (onEvent h w s e).1 := by
+  refine ⟨onEvent_inv h w s e hi.base, ?_⟩
+  rw [onEvent_cfg]
+  intro b hb c hc
+  match e with
+  | .userChanged _ => exact hi.no_extra b hb c hc
+  | .themeChanged _ => exact hi.no_extra b hb c hc
+  | .nap d ev args =>
+    simp only [onEvent] at hb
+    split at hb
+    · split at hb <;> exact hi.no_extra b hb c hc
+    · split at hb
+      · split at hb <;> exact hi.no_extra b hb c hc
+      · exact hi.no_extra b hb c hc
+    · split at hb
+      · split at hb
+        · rename_i ks' hr
+          rcases rebind_mem hr hb with hb | hs
+          · exact hi.no_extra b hb c hc
+          · exact hs c hc
+        · exact hi.no_extra b hb c hc
+      · exact hi.no_extra b hb c hc
+    · exact hi.no_extra b hb c hc
+
+theorem drop_inv' (s : St) (p : PortId) (hi : Inv s) : Inv (drop s p).1 :=
+  ⟨drop_inv s p hi.base, fun b hb => hi.no_extra b (List.mem_filter.mp hb).1⟩
+
+/-- No `keys.bindings` list the runtime can push contains a combo of the full reserved
+set (`NapKeys.reserved` plus `cfg.browserReserved`). -/
+theorem bindings_never_reserved' (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req)
+    (hi : Inv s) (p : PortId) :
+    ∀ x ∈ bindingsOf (handle h w cx s r).1.ks p, x.2 ∉ s.cfg.reservedSet := by
+  intro x hx
+  have hi' := handle_inv' h w cx s r hi
+  rw [← handle_cfg h w cx s r]
+  simp only [bindingsOf, List.mem_filterMap] at hx
+  obtain ⟨b, hb, hm⟩ := hx
+  split at hm
+  · simp only [Option.map_eq_some_iff] at hm
+    obtain ⟨c, hc, rfl⟩ := hm
+    exact hi'.no_reservedSet b hb c hc
+  · simp at hm
+
+/-- Smart forwarding with the suppress list the shell pushed (`bindingsOf`) never
+swallows a combo of the full reserved set: `NapKeys.route` only suppresses combos in the
+list, and under `Inv` the list holds no reserved combo. -/
+theorem reserved_never_suppressed' {s : St} (hi : Inv s) (p : PortId) (ev : KeyEvent)
+    (hr : ev.combo ∈ s.cfg.reservedSet) :
+    route ((bindingsOf s.ks p).map Prod.snd) ev ≠ .localAction := by
+  have hns : ev.combo ∉ (bindingsOf s.ks p).map Prod.snd := by
+    intro hm
+    obtain ⟨x, hx, he⟩ := List.mem_map.mp hm
+    simp only [bindingsOf, List.mem_filterMap] at hx
+    obtain ⟨b, hb, hm⟩ := hx
+    split at hm
+    · simp only [Option.map_eq_some_iff] at hm
+      obtain ⟨c, hc, rfl⟩ := hm
+      simp only at he
+      rw [← he] at hr
+      exact hi.no_reservedSet b hb c hc hr
+    · simp at hm
+  unfold route
+  split
+  · simp
+  · split
+    · simp
+    · simp
+
+/-- Under `Inv`, a reserved combo (pressed in the shell or forwarded) fires no action. -/
+theorem fire_reserved {s : St} (hi : Inv s) {c : Combo} (hc : c ∈ s.cfg.reservedSet) :
+    fire s.ks c = [] := by
+  simp only [fire, List.map_eq_nil_iff, List.filter_eq_nil_iff, beq_iff_eq]
+  intro b hb hbc
+  exact hi.no_reservedSet b hb c hbc hc
 
 /-! ### Properties: routing -/
 
@@ -585,6 +846,27 @@ def s2 : St := (step s1 undoReq).1
   | [m, _] => Json.same m (Json.parse! "{ \"type\": \"keys.registerAction.result\", \"id\": \"r3\", \"actionId\": \"a\" }") | _ => false
 #guard match (step St.init (Json.parse! "{ \"type\": \"keys.registerAction\", \"id\": \"r4\", \"action\": { \"id\": \"a\", \"label\": \"A\", \"defaultKey\": \"Ctrl+Ctrl\" } }")).2 with
   | [m] => Json.same m (Json.parse! "{ \"type\": \"keys.registerAction.result\", \"id\": \"r4\", \"actionId\": \"a\", \"error\": \"invalid action\" }") | _ => false
+-- K1: browser-reserved shortcuts beyond Ctrl+W/T/L are never bound from a hint.
+def hint (dk : String) : Json := Json.parse! ("{ \"type\": \"keys.registerAction\", \"id\": \"h\", \"action\": { \"id\": \"a\", \"label\": \"A\", \"defaultKey\": \"" ++ dk ++ "\" } }")
+def unboundRes : Json := Json.parse! "{ \"type\": \"keys.registerAction.result\", \"id\": \"h\", \"actionId\": \"a\" }"
+#guard ["Meta+W", "Ctrl+n", "Shift+Ctrl+T", "Meta+Shift+N", "Ctrl+Q", "F5", "Ctrl+Tab", "Alt+ArrowLeft"].all fun dk =>
+  match (step St.init (hint dk)).2 with
+  | [m, _] => Json.same m unboundRes | _ => false
+-- With an empty platform list only `NapKeys.reserved` applies, so Meta+W is bound.
+#guard match decode (hint "Meta+W") with
+  | .ok r => match (handle sampleHost sampleWorld sampleCtx (St.init { browserReserved := [] }) r).2 with
+    | .send _ m :: _ => m.getStr? "binding" == some "Meta+W" | _ => false
+  | _ => false
+-- A configured entry matches case-insensitively (`normCombo`).
+#guard match decode (hint "Ctrl+K") with
+  | .ok r => match (handle sampleHost sampleWorld sampleCtx (St.init { browserReserved := [{ ctrl := true, key := "k" }] }) r).2 with
+    | .send _ m :: _ => Json.same m unboundRes | _ => false
+  | _ => false
+-- A host rebind to a browser-reserved combo is refused; to a free one it succeeds.
+#guard (onEvent sampleHost sampleWorld s1 (.nap .keys "rebind" (.obj [("port", Json.nat 7), ("actionId", .str "editor.save"), ("key", .str "Meta+T")]))).2 == []
+#guard ((onEvent sampleHost sampleWorld s1 (.nap .keys "rebind" (.obj [("port", Json.nat 7), ("actionId", .str "editor.save"), ("key", .str "Ctrl+K")]))).2).length == 2
+-- The default list is reserved, so it never fires.
+#guard (onEvent sampleHost sampleWorld s2 (.nap .keys "combo" (.obj [("key", .str "Ctrl+N")]))).2 == []
 #guard (comboOf? "Shift+Ctrl+p").map comboStr == some "Ctrl+Shift+P"
 #guard (comboOf? "Ctrl++").map comboStr == some "Ctrl++"
 #guard (comboOf? "Ctrl+w") ∈ [some ⟨false, true, false, false, "W"⟩]

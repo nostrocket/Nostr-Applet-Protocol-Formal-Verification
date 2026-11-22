@@ -58,8 +58,11 @@ and the browser.
   `srcdoc` = the verified bytes with the CSP `meta` (NIP-5D §Security baseline) as the
   first element of `head` and the bootstrap (`Binding`, `BindingApi`) injected before
   any napplet script, exposing exactly `exposed` as `window.napplet.<domain>`. `inst`
-  is the host's stable identifier for this napplet instance (NAP-STORAGE §Instance
-  Scope).
+  is the host's identifier for this napplet instance (NAP-STORAGE §Instance Scope): it
+  MUST differ between instances that exist at the same time (Unique) and MUST be the
+  same for the same instance across reloads and sessions (Stable). A shell that must
+  restrict who embeds it sets `frame-ancestors` on its own HTTP response (CSP Level 3
+  ignores it in a `meta` element).
 * **Browser events.** The host reports the iframe's `load` events, window messages
   from its `contentWindow` (`hello` when `{type: "napplet.hello"}`, with the
   transferred ports), every message on a bound port as `Input.message`, and a port
@@ -71,11 +74,27 @@ and the browser.
   origins (BUD-01), verifies its SHA-256, decodes it as the declared format (PNG, JPEG
   or WebP for images; a supported video format for previews) and renders only the
   verified bytes; anything unusable falls back to generic artwork and never blocks
-  loading (NIP-5D §Icon, §Presentation media).
+  loading (NIP-5D §Icon, §Presentation media). The manifest `content` is shown as
+  plain text, never HTML or Markdown. A host that resolves a napplet's source uses the
+  pinned `source-commit` when present, verifies a `source-archive` digest before using
+  the archive, and resolves a `nostr` source as a NIP-34 kind 30617 repository
+  announcement.
+* **Theme source.** A host that takes the theme from a kind 16767 event maps its tags as
+  NAP-THEME §Kind 16767 Mapping says, stripping the `url `, `mode ` and `m ` prefixes of
+  the `bg` tag.
+* **Napplet-named relays.** For `Call.subscribe` and `Call.publish` with an explicit relay
+  list (a `relay.subscribe` `relay`, an outbox hint, a NIP-65 entry or a fallback, each
+  already passed by the runtime's `Net.relayAllowed`), the host resolves each name with
+  DNS, refuses to connect (without falling back to another address of the same name)
+  if any address it would use is one `NapResource.isPrivate` classifies as private,
+  re-checks after any redirect or reconnect, and pins the connection to the address it
+  checked (NAP-OUTBOX: napplets MUST NOT force connections to private network relays;
+  NAP-RELAY scoped relays).
 * **Standards.** Where a contract names a standard the host implements that
   standard; the model does not restate it. The complete list the host interface
   relies on:
-  - Nostr: NIP-01 (events, ids, filters, relay protocol), NIP-04, NIP-44 (payload
+  - Nostr: NIP-01 (events, ids, filters, relay protocol), NIP-34 (repository
+    announcements, for `source`), NIP-04, NIP-44 (payload
     encryption), NIP-07 / NIP-46 (signer access, host side only), NIP-13 (proof of
     work), NIP-17 / NIP-59 (which incoming events are encrypted), NIP-19 / NIP-21
     (bech32 entities, `nostr:` URIs), NIP-47 (NWC), NIP-51 (lists), NIP-57 (zaps),
@@ -304,7 +323,7 @@ mode and paid authorisations) per `client` and server.
 |---|---|---|---|
 | `Call.nap .cvm "timer" {ms}` | `ms`: uint | `json {}` | Reply once, `ms` milliseconds after the call. |
 | `Call.nap .cvm "discover" {query?}` | `query` = `CvmDiscoverQuery` (`kinds` already checked against `Cfg.kinds`) | `json {servers: [CvmServer]}` or `json {error}` | NAP-CVM §Discovery over CEP-6 announcements (kinds 11316–11320) and CEP-17 relay lists; honour `kinds` and `limit`; `capabilities` are MCP capability names only; `paymentRequired` per CEP-8 pricing (omit when unknown). The shell truncates to `limit` again. |
-| `Call.nap .cvm "request" a` | `a` = `{client, server: CvmServerRef, message, initialize?, payment}`; `message` is the validated MCP message, a client request's `id` replaced by the transport id (an integer) | `json {message}` (the MCP response, request form only), `json {published: true}` (notification and response forms, after publication), `json {payment: offer}`, or `json {error}` | ContextVM transport (kind 25910, CEP-4 encryption when supported), signed with the client key; verify the response comes from `server` by pubkey; initialise the MCP session when needed or asked (`initialize`); negotiate CEP-8/CEP-35 `payment_interaction` per session (`payment` is the requested mode name). A CEP-8 payment gate (`-32042` or `notifications/payment_required`) for this request is not answered by the host: it replies `{payment: offer}` where `offer` has `amount` (uint, the offer's unit) and `method` (payment method id), and keeps the request open. `error` strings are NAP-CVM's (`server not found`, `initialization failed`, `payment required`, `provider unavailable`, ...). |
+| `Call.nap .cvm "request" a` | `a` = `{client, server: CvmServerRef, message, initialize?, payment}`; `message` is the validated MCP message, a client request's `id` replaced by the transport id (an integer) | `json {message}` (the MCP response, request form only), `json {published: true}` (notification and response forms, after publication), `json {payment: offer}`, or `json {error}` | ContextVM transport (kind 25910, CEP-4 encryption when supported), signed with the client key; verify the response comes from `server` by pubkey; initialise the MCP session when needed or asked (`initialize`); negotiate CEP-8/CEP-35 `payment_interaction` per session (`payment` is the requested mode name). A CEP-8 payment gate (`-32042` or `notifications/payment_required`) for this request is not answered by the host: it replies `{payment: offer}` where `offer` has `amount` (uint, the offer's unit) and `method` (payment method id), and keeps the request open. `error` strings are NAP-CVM's (`server not found`, `initialization failed`, `payment required`, `provider unavailable`, ...). An invocation that would consume a paid authorisation (an existing CEP-8 session authorisation or a host-held pre-paid allowance) is not executed directly: the host first replies `{payment: offer}` for it so the shell applies the request's `payment` mode, and executes only after the shell's `pay`; with `payment` = `deny` it is never sent. MCP `initialize` advertises only client capabilities the shell services (no `sampling`, `roots` or `elicitation` unless the shell implements them). |
 | `Call.nap .cvm "pay" a` | `a` = `{client, server, offer}` | as `request` | Settle exactly this offer once (CEP-8; NWC or another backend), then (transparent mode) await the original response or (explicit gating) retry the same method and params with a fresh internal id, restoring the transport id; reply as `request`. Never settle twice; never replay after an uncertain execution. |
 | `Call.prompt .cvm "payment" d` | `d` = `{server, method, amount, paymentMethod, offer}` | `decision` | NAP-CVM: consent for this invocation showing server, operation, amount and payment method. |
 | `Call.nap .cvm "registry.list" {query?}` | `CvmRegistryQuery` | `json {entries}` or `json {error}` | NAP-CVM §Registry; CEP-15 hashes computed and verified by the host. |
@@ -353,14 +372,20 @@ asynchronous is in `Cfg` (`subscribeAllowed`, `openAllowed`, `maxChannels`).
 ### INTENT (`Napplet/Run/Intent.lean`)
 
 * `HostEvent.nap .intent "catalog" {"entries": [Entry]}` where
-  `Entry = {"id": text, "title"?: text, "z": [text], "i": [[text, ...]]}`. The complete
+  `Entry = {"id": text, "title"?: text, "z": [text], "i": [[text, ...]], "dispatchable"?: bool}`. The complete
   installed catalog, replacing the previous one. Contract: one entry per verified
   installed NIP-5D napplet manifest (kinds 5129, 15129, 35129; signature and artifact
   verified per NIP-5D); `id` is that manifest's catalog id exactly as
   `Identity.catalogId` computes it (`nip5d:35129:<pubkey>:<d>`, `nip5d:15129:<pubkey>`,
   `nip5d:5129:<event id>`), so it equals `Ctx.catalogId` of the running napplet;
   `title` is the manifest's title, if any; `z` lists the values of its `z` tags and `i`
-  the full value lists (after the tag name) of its `i` tags, in tag order. The host
+  the full value lists (after the tag name) of its `i` tags, in tag order.
+  `dispatchable` (default `true`) is `false` when the shell would not admit the
+  manifest as a delivery target: its `R` set (capability requirements) cannot be met,
+  or shell policy would load it without `intent` exposed (NAP-INTENT: "The runtime
+  MUST apply the manifest capability requirements and its own policy before accepting
+  delivery"). Such an entry is never a candidate, so no invocation is accepted for
+  it. The host
   sends it at start-up and whenever the installed set changes. A malformed payload is
   ignored. The runtime pushes `intent.changed` for every role whose availability changed.
 * `HostEvent.nap .intent "default" {"archetype": text, "handler": text | null}`: the user
@@ -401,6 +426,11 @@ torn-down source are cancelled with `Effect.cancel`.
 All host-facing arguments name the endpoint by `port` (the `PortId` of the bound
 port, which the host learned from `Output.bound`).
 
+The host supplies its platform's browser-reserved shortcuts as `Cfg.browserReserved`
+(default `defaultBrowserReserved`, the union of Windows/Linux and macOS browser
+shortcuts); together with Tab, Shift+Tab, Escape and Ctrl+W/T/L they are never bound,
+pushed in `keys.bindings`, or fired, and host rebinds to them are refused.
+
 * `Effect.nap .keys "input" {port, key, code, ctrl, alt, shift, meta}`: a keystroke
   the napplet forwarded. The host processes it as if it occurred in the shell's own
   context (global hotkeys, command palette, workspace switching). It MUST NOT
@@ -419,7 +449,8 @@ port, which the host learned from `Output.bound`).
   has registered the action.
 * `HostEvent.nap .keys "rebind" {port, actionId, key}`: the user changed the binding of
   a registered action; `key` is a combo string, or `null` to unbind. A combo that is
-  unparseable, reserved, or bound by any action is refused (nothing changes);
+  unparseable, reserved (`NapKeys.reserved` or `Cfg.browserReserved`), or bound by any
+  action is refused (nothing changes);
   otherwise the binding changes and the owner gets the new `keys.bindings`.
 
 ### LINK (`Napplet/Run/Link.lean`)
@@ -462,6 +493,10 @@ Effects (`Effect.nap .media op args`, fire-and-forget):
 * `register {sessionId, window, metadata?, context?, capabilities}`: show a
   **napplet-owned** session on the media surface (metadata, media keys, OS integration).
   No source is passed; the host MUST NOT fetch or play anything for it.
+  For both, `context` (`MediaSessionContext`) is display data only: the host ignores
+  link relations it does not know, treats a link without `nostr.relays` as valid,
+  SHOULD validate Nostr references before using them, and never takes fetch authority
+  or ownership from it.
 * `update {sessionId, metadata}`: merge `metadata` (a partial `MediaMetadata`) into the
   displayed metadata; only the given fields change.
 * `state {sessionId, status, position?, duration?, volume?, reason?}`: a napplet-owned
@@ -501,6 +536,9 @@ Events (`HostEvent.nap .media ev args`):
 * `retire {sessionId, reason}`: the host has already stopped the session's output and
   retires it (`preempted`, `ended`, `error`, `backend-exited`, `user`, `policy`; an
   unknown reason is treated as `policy`). The runtime sends the one `media.session.ended`.
+  When the host retires a session because its source completed, `retire` with reason
+  `ended` is the sole notification of that completion: it MUST NOT also send a `state`
+  event with reason `ended` for it.
 
 Events naming an unknown or retired `sessionId` are ignored.
 
@@ -555,7 +593,7 @@ Only core host calls; no `Call.nap`, `Effect.nap`, `HostEvent.nap` or `Call.prom
 | `Effect.nap .pow "resume" {call}` | as above | — | Continue a suspended search. |
 | `HostEvent.nap .pow "progress" a` | `a` = `{call, bestPow, bestNonce?, hashes, hashRate, workers: [{workerId, bestPow, hashes, hashRate}], elapsedMs}` | — | Progress of the `mine` call `call` (numbers as NAP-POW `PowProgress`; `hashRate` any JSON number). |
 | `Call.nap .pow "wake" {}` | `{}` | `json {}` | Reply promptly; lets the queue advance after a teardown freed a mining slot. |
-| `Call.prompt .pow "publish" d` | `d` = `{jobId, event}` (the committed unsigned event with its id) | `decision` | Same publish consent as NAP-OUTBOX `publish`. Anything but `decision true _` refuses (`"publish denied"`). |
+| `Call.prompt .pow "publish" d` | `d` = `{jobId, event}` (the committed unsigned event with its id) | `decision` | Consent to publish the mined event (the user sees the event and its relays are chosen by the host); RELAY and OUTBOX apply their write ACL, and `mineAndPublish` applies `Cfg.canWrite` and requires a signer at submit. Anything but `decision true _` refuses (`"publish denied"`). |
 | `Call.sign ev` | the committed event | `signed` | Core contract. The shell rejects (`"publish denied"`) a signed event whose committed fields differ. |
 | `Call.publish ev none` | the signed event | `published acks` | Core contract; the host selects relays outbox-aware (user's NIP-65 write relays plus the inbox relays of tagged recipients), as NAP-OUTBOX `publish`. |
 | `Effect.cancel ⟨.pow, n⟩` | — | — | Core contract; on `pow.cancel` and on teardown. |

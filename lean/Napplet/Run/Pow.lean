@@ -32,7 +32,9 @@ computed with `Host.crypto.sha256` over the NIP-01 serialisation, and its
 leading zero bits (`leadingZeroBits`, defined here over the hex id) must reach
 the target; otherwise the job fails with `"timeout"`, as in `NapPow.run`.
 
-`mineAndPublish` then asks for publish consent (`Call.prompt .pow "publish"`,
+`mineAndPublish` runs the checks of any signed publish: at submit the write ACL
+(`Cfg.canWrite`, `"policy denied"`) and a configured signer (`w.user ≠ ""`,
+`"publish denied"`), `publishGate`. Once mined it asks for publish consent (`Call.prompt .pow "publish"`,
 unless `Cfg.publishConsent` is off), refuses content that looks like ciphertext
 (NIP-5D §Security 7), signs the committed event through `Call.sign`, checks that
 the signer kept every committed field, and publishes with `Call.publish ev none`
@@ -52,7 +54,7 @@ are queued, asks the host for a `wake` reply so the queue moves on.
 | `Effect.nap .pow "resume" {call}` | as above | — | Continue a suspended search. |
 | `HostEvent.nap .pow "progress" a` | `a` = `{call, bestPow, bestNonce?, hashes, hashRate, workers: [{workerId, bestPow, hashes, hashRate}], elapsedMs}` | — | Progress of the `mine` call `call` (numbers as NAP-POW `PowProgress`; `hashRate` any JSON number). |
 | `Call.nap .pow "wake" {}` | `{}` | `json {}` | Reply promptly; lets the queue advance after a teardown freed a mining slot. |
-| `Call.prompt .pow "publish" d` | `d` = `{jobId, event}` (the committed unsigned event with its id) | `decision` | Same publish consent as NAP-OUTBOX `publish`. Anything but `decision true _` refuses (`"publish denied"`). |
+| `Call.prompt .pow "publish" d` | `d` = `{jobId, event}` (the committed unsigned event with its id) | `decision` | Consent to publish the mined event (the user sees the event and its relays are chosen by the host); RELAY and OUTBOX apply their write ACL, and `mineAndPublish` applies `Cfg.canWrite` and requires a signer at submit. Anything but `decision true _` refuses (`"publish denied"`). |
 | `Call.sign ev` | the committed event | `signed` | Core contract. The shell rejects (`"publish denied"`) a signed event whose committed fields differ. |
 | `Call.publish ev none` | the signed event | `published acks` | Core contract; the host selects relays outbox-aware (user's NIP-65 write relays plus the inbox relays of tagged recipients), as NAP-OUTBOX `publish`. |
 | `Effect.cancel ⟨.pow, n⟩` | — | — | Core contract; on `pow.cancel` and on teardown. |
@@ -326,6 +328,9 @@ structure Cfg where
   maxWorkers : Nat := 4
   /-- Ask the user before `mineAndPublish` signs. -/
   publishConsent : Bool := true
+  /-- Write ACL, the same gate as a signed NAP-RELAY / NAP-OUTBOX publish: a
+  `mineAndPublish` from an identity it refuses is rejected `"policy denied"`. -/
+  canWrite : Identity → Bool := fun _ => true
 
 structure St where
   cfg : Cfg
@@ -498,9 +503,23 @@ def foldJobs (f : St → Job → St × List Eff) (s : St) : List Job → St × L
     let (s2, e2) := foldJobs f s1 js
     (s2, e1 ++ e2)
 
+/-- The checks every signed publish runs, applied to `mineAndPublish` at submit
+time (NAP-POW: mining does not bypass the shell's content and consent checks):
+the write ACL (`"policy denied"`) and a configured signer (`"publish denied"`).
+Plain `mine` never signs, so it passes. -/
+def publishGate (cfg : Cfg) (w : World) (cx : Ctx) : Mode → Option String
+  | .mine => none
+  | .mineAndPublish =>
+    if !cfg.canWrite cx.identity then some "policy denied"
+    else if w.user = "" then some "publish denied"
+    else none
+
 def handle (_h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
   | .submit mode id jobId t target o =>
     let rt := resultType (submitType mode)
+    match publishGate s.cfg w cx mode with
+    | some e => (s, [.send cx.port (rejectJson rt id (some jobId) e)])
+    | none =>
     match NapPow.submit ⟨s.cfg.maxTarget, s.cfg.maxJobs⟩ (s.jobs.map toNapJob) cx.port id jobId t target mode with
     | (_, [.mineResult _ _ _ true _]) =>
       let j : Job :=
@@ -786,6 +805,8 @@ theorem handle_mentions (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (q 
     cases r with
     | submit m id jobId t target o =>
       simp only [handle]
+      split
+      · intro hq; exact .inl hq
       split
       · rename_i j
         intro hq
@@ -1092,6 +1113,8 @@ theorem handle_submit_accepted (h : Host) (w : World) (cx : Ctx) (s : St) (m : M
   obtain ⟨b, e0, hout⟩ := hout
   simp only [handle] at hlen
   split at hlen
+  · simp at hlen
+  split at hlen
   · next _ to i jid e hsub =>
     rw [hsub] at hout
     simp only [List.cons.injEq, PowOut.mineResult.injEq, and_true] at hout
@@ -1218,5 +1241,20 @@ def callNs (es : List Eff) : List Nat := es.filterMap fun | .call t _ => some t.
     | (_, [.send 3 m]) => Json.same m (Json.parse! "{ \"type\": \"pow.hashrate.result\", \"id\": \"h1\", \"hashrate\": { \"hashRate\": 824000, \"workers\": 8, \"perWorker\": [ { \"workerId\": 0, \"hashRate\": 103000 } ], \"byJob\": [ { \"jobId\": \"job-1\", \"hashRate\": 412000 }, { \"jobId\": \"job-2\", \"hashRate\": 412000 } ] } }")
     | _ => false
   | _, _ => false
+
+-- POW-1: `mineAndPublish` runs the signed-publish checks. A write ACL that refuses
+-- the napplet rejects it `"policy denied"`; no signer rejects it `"publish denied"`;
+-- plain `mine` is unaffected by either.
+#guard
+  let h := mkHost "0"
+  let req := "{ \"type\": \"pow.mineAndPublish\", \"id\": \"p1\", \"jobId\": \"job-2\", \"template\": { \"kind\": 1, \"content\": \"powered note\" }, \"target\": 24 }"
+  let deny : St := .init { canWrite := fun _ => false }
+  (match run1 h exWorld exCx deny req with
+   | (s1, [.send 3 m]) => s1.jobs.isEmpty && Json.same m (Json.parse! "{ \"type\": \"pow.mineAndPublish.result\", \"id\": \"p1\", \"jobId\": \"job-2\", \"accepted\": false, \"state\": \"error\", \"error\": \"policy denied\" }")
+   | _ => false) &&
+  (match run1 h { exWorld with user := "" } exCx .init req with
+   | (s1, [.send 3 m]) => s1.jobs.isEmpty && Json.same m (Json.parse! "{ \"type\": \"pow.mineAndPublish.result\", \"id\": \"p1\", \"jobId\": \"job-2\", \"accepted\": false, \"state\": \"error\", \"error\": \"publish denied\" }")
+   | _ => false) &&
+  (run1 h exWorld exCx deny "{ \"type\": \"pow.mine\", \"id\": \"m\", \"jobId\": \"j\", \"template\": { \"kind\": 1, \"content\": \"x\" }, \"target\": 1 }").1.jobs.length == 1
 
 end Napplet.Run.Pow

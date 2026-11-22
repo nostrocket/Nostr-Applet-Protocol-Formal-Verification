@@ -31,7 +31,8 @@ Every recognised request gets exactly one result:
   ignored, so a late response is never a second result nor a `cvm.event`.
   The deadline covers consent and payment, which are further calls of the same
   operation.
-* `close(server)` finishes this endpoint's pending operations on that server with
+* `close(server)` finishes this endpoint's pending operations on that server (its
+  client requests and `registry.call` work pinned to it with `options.server`) with
   `"session closed"` before acknowledging, then tells the host to release the
   session (`Effect.nap .cvm "close"`). Endpoint teardown does the same without
   results.
@@ -39,8 +40,10 @@ Every recognised request gets exactly one result:
 MCP messages (`cvm.request`) are validated in the shell (MCP basic forms:
 request, notification, response; JSON-RPC 2.0; ids are strings or integers).
 Client requests get a transport id (the operation key) through `NapCvm.Corr`,
-which also rejects an id already outstanding in the same session; the caller's id
-is restored in the response. `notifications/cancelled` must name one of this
+which also rejects an id already outstanding in the same session; the session also
+remembers every id used for a client request (`Session.used`), so reuse after
+completion is rejected too (`"invalid message"`) until `close(server)` or teardown
+ends the session. The caller's id is restored in the response. `notifications/cancelled` must name one of this
 endpoint's outstanding requests in that session and is mapped to its transport id.
 A response must answer a server request delivered to this endpoint in that session.
 
@@ -56,9 +59,11 @@ when the gate is met). Only then does it tell the host to settle
 (`Call.nap .cvm "pay"`). A shell configured without payment support answers
 `"payment required"`.
 
-The registry is optional (`Cfg.registry`). Without it, `registry.list`,
-`registry.describe` and `registry.call` answer `"unsupported method"` and
-`registry.has` answers `has: false` (`NapCvm.respond`). With it, `registry.call`
+The registry is optional (`Cfg.registry`). Requests are validated first (selector,
+`limit`, hash, `cache`, `timeoutMs`), so a malformed one answers its validation
+error whether or not the registry exists. Without it, a well-formed
+`registry.list`, `registry.describe` or `registry.call` answers
+`"unsupported method"` and `registry.has` answers `has: false` (`NapCvm.respond`). With it, `registry.call`
 first asks the host for the verified entry and publishes only when the tool's
 verified CEP-15 hash matches (`NapCvm.registryCall`).
 -/
@@ -74,7 +79,7 @@ mode and paid authorisations) per `client` and server.
 |---|---|---|---|
 | `Call.nap .cvm "timer" {ms}` | `ms`: uint | `json {}` | Reply once, `ms` milliseconds after the call. |
 | `Call.nap .cvm "discover" {query?}` | `query` = `CvmDiscoverQuery` (`kinds` already checked against `Cfg.kinds`) | `json {servers: [CvmServer]}` or `json {error}` | NAP-CVM §Discovery over CEP-6 announcements (kinds 11316–11320) and CEP-17 relay lists; honour `kinds` and `limit`; `capabilities` are MCP capability names only; `paymentRequired` per CEP-8 pricing (omit when unknown). The shell truncates to `limit` again. |
-| `Call.nap .cvm "request" a` | `a` = `{client, server: CvmServerRef, message, initialize?, payment}`; `message` is the validated MCP message, a client request's `id` replaced by the transport id (an integer) | `json {message}` (the MCP response, request form only), `json {published: true}` (notification and response forms, after publication), `json {payment: offer}`, or `json {error}` | ContextVM transport (kind 25910, CEP-4 encryption when supported), signed with the client key; verify the response comes from `server` by pubkey; initialise the MCP session when needed or asked (`initialize`); negotiate CEP-8/CEP-35 `payment_interaction` per session (`payment` is the requested mode name). A CEP-8 payment gate (`-32042` or `notifications/payment_required`) for this request is not answered by the host: it replies `{payment: offer}` where `offer` has `amount` (uint, the offer's unit) and `method` (payment method id), and keeps the request open. `error` strings are NAP-CVM's (`server not found`, `initialization failed`, `payment required`, `provider unavailable`, ...). |
+| `Call.nap .cvm "request" a` | `a` = `{client, server: CvmServerRef, message, initialize?, payment}`; `message` is the validated MCP message, a client request's `id` replaced by the transport id (an integer) | `json {message}` (the MCP response, request form only), `json {published: true}` (notification and response forms, after publication), `json {payment: offer}`, or `json {error}` | ContextVM transport (kind 25910, CEP-4 encryption when supported), signed with the client key; verify the response comes from `server` by pubkey; initialise the MCP session when needed or asked (`initialize`); negotiate CEP-8/CEP-35 `payment_interaction` per session (`payment` is the requested mode name). A CEP-8 payment gate (`-32042` or `notifications/payment_required`) for this request is not answered by the host: it replies `{payment: offer}` where `offer` has `amount` (uint, the offer's unit) and `method` (payment method id), and keeps the request open. `error` strings are NAP-CVM's (`server not found`, `initialization failed`, `payment required`, `provider unavailable`, ...). An invocation that would consume a paid authorisation (an existing CEP-8 session authorisation or a host-held pre-paid allowance) is not executed directly: the host first replies `{payment: offer}` for it so the shell applies the request's `payment` mode, and executes only after the shell's `pay`; with `payment` = `deny` it is never sent. MCP `initialize` advertises only client capabilities the shell services (no `sampling`, `roots` or `elicitation` unless the shell implements them). |
 | `Call.nap .cvm "pay" a` | `a` = `{client, server, offer}` | as `request` | Settle exactly this offer once (CEP-8; NWC or another backend), then (transparent mode) await the original response or (explicit gating) retry the same method and params with a fresh internal id, restoring the transport id; reply as `request`. Never settle twice; never replay after an uncertain execution. |
 | `Call.prompt .cvm "payment" d` | `d` = `{server, method, amount, paymentMethod, offer}` | `decision` | NAP-CVM: consent for this invocation showing server, operation, amount and payment method. |
 | `Call.nap .cvm "registry.list" {query?}` | `CvmRegistryQuery` | `json {entries}` or `json {error}` | NAP-CVM §Registry; CEP-15 hashes computed and verified by the host. |
@@ -372,6 +377,9 @@ structure Session where
   port : PortId
   server : String
   client : String
+  /-- MCP ids this endpoint has used for client requests in this session, completed
+  or not (NAP-CVM: reusing one answers `"invalid message"`). Cleared with the session. -/
+  used : List String := []
   deriving DecidableEq, Repr
 
 structure St where
@@ -531,8 +539,13 @@ def answer (s : St) (p : Pend) (j : Json) (gated : Bool) : St × List Eff :=
 
 /-! ### Component -/
 
+/-- Operations that belong to this endpoint's session with `server`: its client
+requests, and `registry.call` work pinned to that server (`options.server`). -/
+def inSession (port : PortId) (server : String) (p : Pend) : Bool :=
+  p.port == port && (p.op == .request || p.op == .registryCall) && p.server == server
+
 def sessionOps (s : St) (port : PortId) (server : String) : List Pend :=
-  s.pending.filter fun p => p.port == port && p.op == .request && p.server == server
+  s.pending.filter (inSession port server)
 
 def cancelAll (ps : List Pend) : List Eff :=
   ps.flatMap fun p => [.effect (.cancel ⟨.cvm, p.key⟩), .effect (.cancel ⟨.cvm, p.call⟩)]
@@ -556,7 +569,19 @@ def unimplemented (cx : Ctx) (id : String) (op : Op) : List Eff :=
 /-- An accepted outbound request or notification opens the endpoint's session. -/
 def openSession (s : St) (cx : Ctx) (server : String) : St :=
   if s.sessions.any (fun x => x.port == cx.port && x.server == server) then s
-  else { s with sessions := ⟨cx.port, server, cx.endpointId⟩ :: s.sessions }
+  else { s with sessions := ⟨cx.port, server, cx.endpointId, []⟩ :: s.sessions }
+
+/-- Record a client request id in the endpoint's session with `server`, opening the
+session if needed. -/
+def useId (s : St) (cx : Ctx) (server cid : String) : St :=
+  if s.sessions.any (fun x => x.port == cx.port && x.server == server) then
+    { s with sessions := s.sessions.map fun x =>
+        if x.port == cx.port && x.server == server then { x with used := cid :: x.used } else x }
+  else { s with sessions := ⟨cx.port, server, cx.endpointId, [cid]⟩ :: s.sessions }
+
+/-- Has this endpoint used `cid` for a client request in its session with `server`? -/
+def idUsed (s : St) (port : PortId) (server cid : String) : Bool :=
+  s.sessions.any fun x => x.port == port && x.server == server && x.used.contains cid
 
 def Form.method : Form → String
   | .request _ meth | .notification meth => meth
@@ -583,10 +608,11 @@ def acceptForm (s : St) (cx : Ctx) (id : String) (srv : ServerRef) (o : ReqOpts)
   | .request i meth =>
     let server := srv.pubkey
     let cid := Json.render i
-    if s.corr.pending.any (fun q => q.endpoint == cx.port && q.server == server && q.callerId == cid) then
+    if s.corr.pending.any (fun q => q.endpoint == cx.port && q.server == server && q.callerId == cid) ||
+        idUsed s cx.port server cid then
       (s, [.send cx.port (errResult .request id "invalid message")])
     else
-      launch (openSession { s with corr := (sendReq { s.corr with next := s.next } cx.port server cid).1 } cx server)
+      launch (useId { s with corr := (sendReq { s.corr with next := s.next } cx.port server cid).1 } cx server cid)
         cx id .request server meth (o.payment.getD .prompt) (some i) true none .null .main ms
         (.nap .cvm "request" (requestArgs cx srv o (setMember m "id" (.nat s.next))))
   | .notification meth =>
@@ -628,35 +654,34 @@ def handle (_h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
     if !isHex64 srv.pubkey then (s, [.send cx.port (errResult .close id "invalid request")]) else
     let ops := sessionOps s cx.port srv.pubkey
     let s1 : St := { s with
-      pending := s.pending.filter (fun p => !(p.port == cx.port && p.op == .request && p.server == srv.pubkey)),
+      pending := s.pending.filter (fun p => !inSession cx.port srv.pubkey p),
       corr := { s.corr with pending := s.corr.pending.filter fun q => !(q.endpoint == cx.port && q.server == srv.pubkey) },
       sessions := s.sessions.filter (fun x => !(x.port == cx.port && x.server == srv.pubkey)),
       inbound := s.inbound.filter fun x => !(x.1 == cx.port && x.2.1 == srv.pubkey) }
     (s1, cancelAll ops ++ ops.map (fun p => .send p.port (errResult p.op p.envId "session closed")) ++
       [closeEffect cx.endpointId srv.pubkey, .send cx.port (result .close id [])])
   | .registryList id q =>
-    if !s.cfg.registry then (s, unimplemented cx id .registryList) else
     let q' := q.getD {}
     if !positive q'.limit || !(match q'.schemaHash with | some hsh => isHex64 hsh | none => true) ||
         q'.family == some "" then
       (s, [.send cx.port (errResult .registryList id "invalid request")])
+    else if !s.cfg.registry then (s, unimplemented cx id .registryList)
     else launch s cx id .registryList "" "" .deny none true q'.limit .null .main defaultTimeout
       (.nap .cvm "registry.list" (Json.mkObj [("query", q.map regQueryJson)]))
   | .registryHas id sel srv =>
-    if !s.cfg.registry then (s, unimplemented cx id .registryHas) else
     if !validSelector sel || !(match srv with | some r => isHex64 r.pubkey | none => true) then
       (s, [.send cx.port (errResult .registryHas id "invalid request")])
+    else if !s.cfg.registry then (s, unimplemented cx id .registryHas)
     else launch s cx id .registryHas "" "" .deny none true none .null .main defaultTimeout
       (.nap .cvm "registry.has" (Json.mkObj [("selector", some (selectorJson sel)), ("server", srv.map serverJson)]))
   | .registryDescribe id sel srv =>
-    if !s.cfg.registry then (s, unimplemented cx id .registryDescribe) else
     if !validSelector sel || !(match srv with | some r => isHex64 r.pubkey | none => true) then
       (s, [.send cx.port (errResult .registryDescribe id "invalid request")])
+    else if !s.cfg.registry then (s, unimplemented cx id .registryDescribe)
     else launch s cx id .registryDescribe "" "" .deny none true none .null .main defaultTimeout
       (.nap .cvm "registry.describe" (Json.mkObj [("selector", some (selectorJson sel)), ("server", srv.map serverJson)]))
   | .registryCall id sel tool args o =>
     let bad (e : String) := (s, [Eff.send cx.port (errResult .registryCall id e)])
-    if !s.cfg.registry then (s, unimplemented cx id .registryCall) else
     if !validSelector sel || !(match o.server with | some r => isHex64 r.pubkey | none => true) then
       bad "invalid request" else
     match o.cache with
@@ -665,6 +690,7 @@ def handle (_h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
         match timeoutOf s o.timeoutMs with
         | .error e => bad e
         | .ok ms =>
+          if !s.cfg.registry then (s, unimplemented cx id .registryCall) else
           let server := (o.server.map (·.pubkey)).getD ""
           if !s.cfg.acl cx.catalogId server "tools/call" then bad "policy denied" else
           launch s cx id .registryCall server "tools/call" (o.payment.getD .prompt) none true none
@@ -678,6 +704,7 @@ def handle (_h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
       match timeoutOf s o.timeoutMs with
       | .error e => bad e
       | .ok ms =>
+        if !s.cfg.registry then (s, unimplemented cx id .registryCall) else
         let server := (o.server.map (·.pubkey)).getD ""
         if !s.cfg.acl cx.catalogId server "tools/call" then bad "policy denied" else
         launch s cx id .registryCall server "tools/call" (o.payment.getD .prompt) none true none
@@ -1021,6 +1048,28 @@ theorem within_openSession (s : St) (cx : Ctx) (server : String) :
         · exact .inl (m_session hx))
       (fun x hx => .inl (m_inbound hx))
 
+theorem within_useId (s : St) (cx : Ctx) (server cid : String) :
+    Within s (useId s cx server cid) (· = cx.port) := by
+  unfold useId
+  split
+  · exact within_of (fun x hx => .inl (m_pending hx)) (fun x hx => .inl (m_corr hx))
+      (by
+        intro x hx
+        simp only [List.mem_map] at hx
+        obtain ⟨y, hy, rfl⟩ := hx
+        split
+        · exact .inl (show mentions s y.port = true from m_session hy)
+        · exact .inl (m_session hy))
+      (fun x hx => .inl (m_inbound hx))
+  · exact within_of (fun x hx => .inl (m_pending hx)) (fun x hx => .inl (m_corr hx))
+      (by
+        intro x hx
+        simp only [List.mem_cons] at hx
+        rcases hx with rfl | hx
+        · exact .inr rfl
+        · exact .inl (m_session hx))
+      (fun x hx => .inl (m_inbound hx))
+
 theorem within_sendReq (s : St) (cx : Ctx) (server cid : String) :
     Within s { s with corr := (sendReq { s.corr with next := s.next } cx.port server cid).1 } (· = cx.port) :=
   within_of (fun x hx => .inl (m_pending hx))
@@ -1046,7 +1095,7 @@ theorem acceptForm_within (s : St) (cx : Ctx) (id : String) (srv : ServerRef) (o
     split
     · exact Within.refl _ _
     · exact Within.trans (within_sendReq _ _ _ _)
-        (Within.trans (within_openSession _ _ _) (within_launch _ _ _ _ _ _ _ _ _ _ _ _ _ _))
+        (Within.trans (within_useId _ _ _ _) (within_launch _ _ _ _ _ _ _ _ _ _ _ _ _ _))
   | notification meth =>
     simp only [acceptForm]
     split
@@ -1171,20 +1220,23 @@ theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : Po
 
 /-! ### NAP-CVM properties, lifted -/
 
-/-- Without registry support, each registry operation gets exactly one answer:
-`"unsupported method"`, or `has: false` for `registry.has` (`NapCvm.exactly_one_result`,
-`NapCvm.unimplemented_has_false`). -/
-theorem registry_unsupported (h : Host) (w : World) (cx : Ctx) (s : St) (hr : s.cfg.registry = false) (id : String) :
-    (handle h w cx s (.registryHas id {} none)).2 =
+/-- Without registry support, each well-formed registry operation gets exactly one
+answer: `"unsupported method"`, or `has: false` for `registry.has`
+(`NapCvm.exactly_one_result`, `NapCvm.unimplemented_has_false`). Malformed ones are
+validated first and answer `"invalid request"` (NAP-CVM: validation errors are not
+reported as `unsupported method`). -/
+theorem registry_unsupported (h : Host) (w : World) (cx : Ctx) (s : St) (hr : s.cfg.registry = false)
+    (id : String) (sel : Selector) (hsel : validSelector sel = true) :
+    (handle h w cx s (.registryHas id sel none)).2 =
       [.send cx.port (Json.msg "cvm.registry.has.result" [("id", some (.str id)), ("has", some (.bool false))])] ∧
-    ∀ r, (r = .registryList id none ∨ ∃ sel srv, r = .registryDescribe id sel srv) →
+    ∀ r, (r = .registryList id none ∨ r = .registryDescribe id sel none) →
       (handle h w cx s r).2 = [.send cx.port (errResult (if r = .registryList id none then .registryList
         else .registryDescribe) id "unsupported method")] := by
   refine ⟨?_, ?_⟩
-  · simp [handle, hr, unimplemented, respond, outJson, result, opType]
-  · rintro r (rfl | ⟨sel, srv, rfl⟩)
-    · simp [handle, hr, unimplemented, respond, outJson, errResult]
-    · simp [handle, hr, unimplemented, respond, outJson, errResult]
+  · simp [handle, hr, hsel, unimplemented, respond, outJson, result, opType]
+  · rintro r (rfl | rfl)
+    · simp [handle, hr, positive, unimplemented, respond, outJson, errResult]
+    · simp [handle, hr, hsel, unimplemented, respond, outJson, errResult]
 
 theorem unimplemented_one (cx : Ctx) (id : String) (op : Op) : (unimplemented cx id op).length = 1 := by
   simp [unimplemented, exactly_one_result]
@@ -1617,5 +1669,54 @@ def sameAs (j : Json) (t : String) : Bool := Json.same j (Json.parse! (sub t))
       | (_, es) => (es.filterMap fun | .send p _ => some p | _ => none) == [6]
     | none => false
   | _ => false
+
+-- CVM-1: an MCP id already used for a client request in the session answers
+-- "invalid message", even after that request completed; closing the session clears it.
+#guard
+  let req := "{ \"type\": \"cvm.request\", \"id\": \"r\", \"server\": { \"pubkey\": \"65a334...\" }, \"message\": { \"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"tools/list\" } }"
+  let (s1, e1) := run1 {} .init req
+  match mainCall? e1 with
+  | some (n, _) =>
+    let (s2, _) := onReply exHost exWorld s1 n (.json (Json.parse! "{\"message\": {\"jsonrpc\": \"2.0\", \"id\": 0, \"result\": {}}}"))
+    s2.pending.isEmpty &&
+    (match run1 {} s2 req with
+     | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.request.result\", \"id\": \"r\", \"error\": \"invalid message\" }"
+     | _ => false) &&
+    let (s3, _) := run1 {} s2 "{ \"type\": \"cvm.close\", \"id\": \"x\", \"server\": { \"pubkey\": \"65a334...\" } }"
+    (calls (run1 {} s3 req).2).length == 2
+  | none => false
+
+-- CVM-2: validation comes before "unsupported method" when the registry is absent.
+#guard
+  (match run1 {} .init "{ \"type\": \"cvm.registry.list\", \"id\": \"l2\", \"query\": { \"limit\": 0 } }" with
+   | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.registry.list.result\", \"id\": \"l2\", \"error\": \"invalid request\" }"
+   | _ => false) &&
+  (match run1 {} .init "{ \"type\": \"cvm.registry.has\", \"id\": \"h3\", \"selector\": { \"schemaHash\": \"zz\" } }" with
+   | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.registry.has.result\", \"id\": \"h3\", \"error\": \"invalid request\" }"
+   | _ => false) &&
+  (match run1 {} .init "{ \"type\": \"cvm.registry.describe\", \"id\": \"s2\", \"selector\": {} }" with
+   | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.registry.describe.result\", \"id\": \"s2\", \"error\": \"invalid request\" }"
+   | _ => false) &&
+  (match run1 {} .init "{ \"type\": \"cvm.registry.call\", \"id\": \"c2\", \"selector\": { \"family\": \"relatr\" }, \"tool\": \"t\", \"options\": { \"cache\": \"bogus\" } }" with
+   | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.registry.call.result\", \"id\": \"c2\", \"error\": \"invalid request\" }"
+   | _ => false) &&
+  (match run1 {} .init "{ \"type\": \"cvm.registry.call\", \"id\": \"c3\", \"selector\": { \"family\": \"relatr\" }, \"tool\": \"t\", \"options\": { \"timeoutMs\": 0 } }" with
+   | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.registry.call.result\", \"id\": \"c3\", \"error\": \"invalid timeout\" }"
+   | _ => false) &&
+  (match run1 {} .init "{ \"type\": \"cvm.registry.call\", \"id\": \"c4\", \"selector\": { \"family\": \"relatr\" }, \"tool\": \"t\" }" with
+   | (_, [.send 5 m]) => sameAs m "{ \"type\": \"cvm.registry.call.result\", \"id\": \"c4\", \"error\": \"unsupported method\" }"
+   | _ => false)
+
+-- CVM-5: close(server) also finishes registry.call work pinned to that server.
+#guard
+  let cfg : Cfg := { registry := true }
+  let (s1, _) := run1 cfg .init "{ \"type\": \"cvm.registry.call\", \"id\": \"c5\", \"selector\": { \"family\": \"relatr\" }, \"tool\": \"t\", \"options\": { \"server\": { \"pubkey\": \"65a334...\" } } }"
+  let (s2, _) := run1 cfg s1 "{ \"type\": \"cvm.registry.call\", \"id\": \"c6\", \"selector\": { \"family\": \"relatr\" }, \"tool\": \"t\" }"
+  let (s3, e3) := run1 cfg s2 "{ \"type\": \"cvm.close\", \"id\": \"x\", \"server\": { \"pubkey\": \"65a334...\" } }"
+  s3.pending.length == 1 &&
+  (match sends e3 with
+   | [m1, m2] => sameAs m1 "{ \"type\": \"cvm.registry.call.result\", \"id\": \"c5\", \"error\": \"session closed\" }" &&
+       sameAs m2 "{ \"type\": \"cvm.close.result\", \"id\": \"x\" }"
+   | _ => false)
 
 end Napplet.Run.Cvm

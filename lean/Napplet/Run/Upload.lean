@@ -24,7 +24,11 @@ and the push `upload.status.changed {status}` (no `id`).
 the model represents it as its byte list, a JSON array of integers 0–255 (`bytesJson`).
 It is never base64 (upstream forbids requiring that).
 
-Flow of one `upload.upload` (the gates are `NapUpload.upload`'s, in its order):
+Flow of one `upload.upload` (the gates are `NapUpload.upload`'s, in its order). The
+gates use the policy in force for the requesting napplet (`Cfg.forNapplet`):
+`Cfg.policyFor` may give a napplet its own allowed rails, maximum size and MIME
+list (`NappletPolicy`); absent fields fall back to the shell-wide ones.
+`upload.info` reports that same per-napplet policy.
 1. More than `Cfg.maxActive` unfinished uploads on this endpoint → top-level
    `"quota exceeded"` (per-napplet rate limit).
 2. Rail (`NapUpload.chooseRail`: requested and enabled, else the configured default)
@@ -42,7 +46,7 @@ Flow of one `upload.upload` (the gates are `NapUpload.upload`'s, in its order):
    for `nip96`, Blossom (BUD-02/BUD-11) kind 24242 for `blossom`; other rails carry
    no authorisation. A signature that does not match the template or fails
    `Host.verifyEvent` ends the upload with `"upload failed"`.
-5. The gates and consent are checked again, then the bytes go to the server
+5. The gates (with the napplet's policy as it is now) and consent are checked again, then the bytes go to the server
    (`Call.nap .upload "put"`). If they are more than `Cfg.syncMaxBytes`, the initial
    `upload.upload.result` (status `uploading`) is sent now and the end is pushed as
    `upload.status.changed`; otherwise the result is sent when the server answers.
@@ -122,6 +126,17 @@ structure RailCfg where
   /-- URL forms disclosed in `upload.info` (`https`, `blossom`, …). -/
   returns : List String := []
 
+/-- A per-napplet upload policy (NAP-UPLOAD: the shell MUST enforce per-napplet
+policy for allowed rails, maximum file size and allowed MIME types). Each `none`
+field falls back to the shell-wide value in `Cfg`. -/
+structure NappletPolicy where
+  /-- Rails this napplet may use; others are treated as disabled for it. -/
+  rails : Option (List Rail) := none
+  /-- Maximum file size for this napplet (replaces `Cfg.maxBytes`). -/
+  maxBytes : Option Nat := none
+  /-- Accepted sniffed MIME types for this napplet (replaces `Cfg.mimeTypes`). -/
+  mimeTypes : Option (List String) := none
+
 structure Cfg where
   rails : List RailCfg := []
   defaultRail : Option Rail := none
@@ -139,11 +154,26 @@ structure Cfg where
   discloseInfo : Bool := true
   /-- Populate `nip94` in results. -/
   nip94 : Bool := true
+  /-- Per-napplet policy, by manifest key; `none` = the shell-wide fields above. -/
+  policyFor : ManifestKey → Option NappletPolicy := fun _ => none
 
 def Cfg.railCfg (cfg : Cfg) (r : Rail) : Option RailCfg := cfg.rails.find? (·.rail == r)
 def Cfg.railEnabled (cfg : Cfg) (r : Rail) : Bool := (cfg.railCfg r).any (·.enabled)
 def Cfg.server (cfg : Cfg) (r : Rail) : Option String := (cfg.railCfg r).bind (·.server)
 def Cfg.mimeAllowed (cfg : Cfg) (m : String) : Bool := cfg.mimeTypes.all (·.contains m)
+
+/-- The configuration in force for napplet `k`: its `NappletPolicy` applied over
+the shell-wide fields (rails outside its allowed list are disabled for it). -/
+def Cfg.forNapplet (cfg : Cfg) (k : ManifestKey) : Cfg :=
+  match cfg.policyFor k with
+  | none => cfg
+  | some p =>
+    { cfg with
+      rails := match p.rails with
+        | none => cfg.rails
+        | some ok => cfg.rails.map fun rc => if ok.contains rc.rail then rc else { rc with enabled := false }
+      maxBytes := p.maxBytes.getD cfg.maxBytes
+      mimeTypes := match p.mimeTypes with | some ms => some ms | none => cfg.mimeTypes }
 
 /-! ### Requests -/
 
@@ -391,6 +421,17 @@ theorem gates_agree (h : Host) (cfg : Cfg) (r : UploadReq) (e : String) (hg : ga
         · simp only [Except.error.injEq] at hg; subst hg; rename_i hm; simp [hl, hm]
         · simp at hg
 
+/-- `gates_agree` for the policy in force for napplet `k` (`Cfg.forNapplet`): the
+gates the component runs refuse exactly as `NapUpload.upload` does under that
+napplet's rails, size limit and MIME list. -/
+theorem gates_agree_forNapplet (h : Host) (cfg : Cfg) (k : ManifestKey) (r : UploadReq) (e : String)
+    (hg : gates h (cfg.forNapplet k) r = .error e)
+    (put : String → Rail → Bytes → Option String) (signAuth : Rail → Hash → String) (approves c : Bool)
+    (to : Endpoint) (id : String) :
+    upload { env h (cfg.forNapplet k) with put, signAuth, userApproves := approves } c to id (modelReq r) =
+      (c, [.topError to id e]) :=
+  gates_agree h (cfg.forNapplet k) r e hg put signAuth approves c to id
+
 /-! ### Authorisation templates -/
 
 /-- NIP-98 (kind 27235) for `nip96`, Blossom kind 24242 for `blossom`, nothing otherwise. -/
@@ -439,7 +480,7 @@ def failRes (st : UploadState) (e : String) : Res := { ok := false, status := st
 
 /-- Send the bytes, after checking the gates and consent again. -/
 def put (h : Host) (w : World) (s : St) (r : Rec) (auth : Option NostrEvent) : St × List Eff :=
-  if gatesPass h s.cfg r.req r.rail r.server ∧ r.napplet ∈ s.consented then
+  if gatesPass h (s.cfg.forNapplet r.napplet) r.req r.rail r.server ∧ r.napplet ∈ s.consented then
     let r1 := { r with stage := .putting s.next, res := { ok := true, status := .uploading }, updatedAt := w.now }
     let call := Eff.call ⟨.upload, s.next⟩ (.nap .upload "put" (putArgs h r auth s.next))
     let s1 := { s with next := s.next + 1 }
@@ -469,7 +510,8 @@ def active (s : St) (p : PortId) : Nat :=
 def handle (h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
   | .info id =>
     if s.cfg.discloseInfo then
-      (s, [.send cx.port (Json.msg "upload.info.result" [("id", some (.str id)), ("info", some (infoJson s.cfg))])])
+      (s, [.send cx.port (Json.msg "upload.info.result" [("id", some (.str id)),
+        ("info", some (infoJson (s.cfg.forNapplet cx.identity.key)))])])
     else
       (s, [.send cx.port (Json.msg "upload.info.result"
         [("id", some (.str id)), ("info", some (.obj [("rails", .arr [])])), ("error", some (.str "policy denied"))])])
@@ -480,7 +522,7 @@ def handle (h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
   | .upload id req =>
     if active s cx.port ≥ s.cfg.maxActive then (s, [.send cx.port (topError "upload.upload.result" id "quota exceeded")])
     else
-    match gates h s.cfg req with
+    match gates h (s.cfg.forNapplet cx.identity.key) req with
     | .error e => (s, [.send cx.port (topError "upload.upload.result" id e)])
     | .ok (rail, srv) =>
       let stored := if req.noTransform = some true then req.data else h.transform req.data
@@ -777,7 +819,7 @@ record (rail enabled, shell-configured server, size, sniffed MIME) and the nappl
 consented. -/
 theorem put_sends_only_checked (h : Host) (w : World) (s : St) (r : Rec) (auth : Option NostrEvent)
     (t : CallTag) (a : Json) (he : Eff.call t (.nap .upload "put" a) ∈ (put h w s r auth).2) :
-    gates h s.cfg r.req = .ok (r.rail, r.server) ∧ r.napplet ∈ s.consented ∧
+    gates h (s.cfg.forNapplet r.napplet) r.req = .ok (r.rail, r.server) ∧ r.napplet ∈ s.consented ∧
     a = putArgs h r auth t.n := by
   simp only [put] at he
   split at he
@@ -793,7 +835,7 @@ theorem put_sends_only_checked (h : Host) (w : World) (s : St) (r : Rec) (auth :
 
 theorem authorize_puts (h : Host) (w : World) (s : St) (r : Rec) (t : CallTag) (a : Json)
     (he : Eff.call t (.nap .upload "put" a) ∈ (authorize h w s r).2) :
-    gates h s.cfg r.req = .ok (r.rail, r.server) ∧ r.napplet ∈ s.consented ∧
+    gates h (s.cfg.forNapplet r.napplet) r.req = .ok (r.rail, r.server) ∧ r.napplet ∈ s.consented ∧
     authTemplate s.cfg w.now w.user r (h.crypto.sha256 r.stored) = none ∧ a = putArgs h r none t.n := by
   simp only [authorize] at he
   split at he
@@ -806,7 +848,8 @@ theorem authorize_puts (h : Host) (w : World) (s : St) (r : Rec) (t : CallTag) (
 that needs no signed authorisation, after the policy gates. -/
 theorem handle_put_requires_policy (h : Host) (w : World) (cx : Ctx) (s : St) (r : Req) (t : CallTag)
     (a : Json) (he : Eff.call t (.nap .upload "put" a) ∈ (handle h w cx s r).2) :
-    cx.identity.key ∈ s.consented ∧ ∃ rec, gates h s.cfg rec.req = .ok (rec.rail, rec.server) ∧
+    cx.identity.key ∈ s.consented ∧ ∃ rec, rec.napplet = cx.identity.key ∧
+      gates h (s.cfg.forNapplet rec.napplet) rec.req = .ok (rec.rail, rec.server) ∧
       a = putArgs h rec none t.n := by
   cases r with
   | info => simp only [handle] at he; split at he <;> simp at he
@@ -820,7 +863,7 @@ theorem handle_put_requires_policy (h : Host) (w : World) (cx : Ctx) (s : St) (r
       · split at he
         · rename_i hk
           obtain ⟨hg, -, -, ha⟩ := authorize_puts h w _ _ t a he
-          exact ⟨hk, _, hg, ha⟩
+          exact ⟨hk, _, rfl, hg, ha⟩
         · simp at he
 
 /-- A host reply sends bytes only after the gates passed and the napplet consented
@@ -829,7 +872,7 @@ produced for the shell's template (kind 27235 or 24242 over the stored bytes'
 hash) and that verifies; or with none for a rail that has no authorisation. -/
 theorem onReply_put_requires_policy (h : Host) (w : World) (s : St) (n : Nat) (rep : Reply) (t : CallTag)
     (a : Json) (he : Eff.call t (.nap .upload "put" a) ∈ (onReply h w s n rep).2) :
-    ∃ rec, gates h s.cfg rec.req = .ok (rec.rail, rec.server) ∧
+    ∃ rec, gates h (s.cfg.forNapplet rec.napplet) rec.req = .ok (rec.rail, rec.server) ∧
       (rec.napplet ∈ s.consented ∨ ∃ c, rep = .decision true c) ∧
       ((∃ now user, authTemplate s.cfg now user rec (h.crypto.sha256 rec.stored) = none ∧ a = putArgs h rec none t.n) ∨
        (∃ tmpl ev, rec.stage = .signing n tmpl ∧ rep = .signed (some ev) ∧ fits h tmpl ev = true ∧
@@ -1115,5 +1158,42 @@ def ex2St : St := { St.init { sampleCfg with nip94 := false } with nextUpload :=
   | .reject [m] => Json.same m (Json.parse! "{ \"type\": \"upload.upload.result\", \"id\": \"u5\", \"error\": \"invalid request\" }")
   | _ => false
 #guard decode (Json.parse! "{ \"type\": \"upload.delete\", \"id\": \"u6\" }") matches .unknown
+
+-- Per-napplet policy (NAP-UPLOAD: rails, maximum size, MIME types per napplet).
+def notesPolicy : NappletPolicy :=
+  { rails := some [.blossom], maxBytes := some 2, mimeTypes := some ["application/pdf"] }
+def polOf (k : ManifestKey) : Option NappletPolicy := if k = sampleCtx.identity.key then some notesPolicy else none
+def polCfg : Cfg := { sampleCfg with policyFor := polOf }
+def otherCtx : Ctx := { sampleCtx with port := 6, identity := { sampleCtx.identity with dTag := some "other" } }
+
+#guard
+  let err (h : Host) (cx : Ctx) (req : UploadReq) : List Json := sends (handle h (sampleWorld 1) cx (.init polCfg) (.upload "p" req)).2
+  let isErr (ms : List Json) (e : String) : Bool := match ms with
+    | [m] => Json.same m (Json.parse! ("{ \"type\": \"upload.upload.result\", \"id\": \"p\", \"error\": \"" ++ e ++ "\" }"))
+    | _ => false
+  isErr (err ex2Host sampleCtx { rail := some "nip96", data := [1] }) "unsupported rail" &&
+  isErr (err ex2Host sampleCtx { rail := some "blossom", data := [1, 2, 3] }) "file too large" &&
+  isErr (err ex1Host sampleCtx { rail := some "blossom", data := [1, 2] }) "unsupported media type" &&
+  -- another napplet keeps the shell-wide policy
+  (match handle ex1Host (sampleWorld 1) otherCtx (.init polCfg) (.upload "p" { rail := some "nip96", data := [1, 2, 3] }) with
+   | (_, [.call _ (.prompt .upload "upload" _)]) => true
+   | _ => false) &&
+  -- upload.info reports the napplet's own policy
+  (match sends (handle ex1Host (sampleWorld 1) sampleCtx (.init polCfg) (.info "i")).2 with
+   | [m] => Json.same m (Json.parse! "{ \"type\": \"upload.info.result\", \"id\": \"i\", \"info\": { \"rails\": [ { \"rail\": \"nip96\", \"enabled\": false, \"returns\": [\"https\"] }, { \"rail\": \"blossom\", \"enabled\": true, \"returns\": [\"https\", \"blossom\"] } ], \"maxBytes\": 2, \"mimeTypes\": [\"application/pdf\"] } }")
+   | _ => false)
+
+-- The re-check before `put` uses the napplet's policy as it is then.
+#guard match decodeOk ex2Req with
+  | some r =>
+    match handle ex2Host (sampleWorld 100) sampleCtx ex2St r with
+    | (s1, [.call ⟨.upload, 0⟩ (.sign t)]) =>
+      let ev : NostrEvent := ⟨"e", t.pubkey, t.createdAt, t.kind, t.tags, t.content, "s"⟩
+      let s1' := { s1 with cfg := { s1.cfg with policyFor := fun _ => some { maxBytes := some 1 } } }
+      (match onReply ex2Host (sampleWorld 101) s1' 0 (.signed (some ev)) with
+       | (_, [.send 5 m]) => Json.same m (Json.parse! "{ \"type\": \"upload.upload.result\", \"id\": \"u2\", \"result\": { \"ok\": false, \"uploadId\": \"upload-2\", \"status\": \"failed\", \"rail\": \"blossom\", \"error\": \"policy denied\" } }")
+       | _ => false)
+    | _ => false
+  | none => false
 
 end Napplet.Run.Upload

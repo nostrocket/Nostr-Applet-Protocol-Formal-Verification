@@ -66,6 +66,7 @@ structure Config where
   intentCfg : Run.Intent.Cfg := {}
   notifyCfg : Run.Notify.Cfg := {}
   displayCfg : Run.Display.Cfg := {}
+  keysCfg : Run.Keys.Cfg := {}
   relayCfg : Run.Relay.Cfg := {}
   outboxCfg : Run.Outbox.Cfg := {}
   mediaCfg : Run.Media.Cfg := {}
@@ -122,7 +123,7 @@ def RtState.init (cfg : Config) : RtState where
   intent := Run.Intent.St.init cfg.intentCfg
   notify := Run.Notify.St.init cfg.notifyCfg
   display := Run.Display.St.init cfg.displayCfg
-  keys := Run.Keys.St.init
+  keys := Run.Keys.St.init cfg.keysCfg
   relay := Run.Relay.St.init cfg.relayCfg
   outbox := Run.Outbox.St.init cfg.outboxCfg
   media := Run.Media.St.init cfg.mediaCfg

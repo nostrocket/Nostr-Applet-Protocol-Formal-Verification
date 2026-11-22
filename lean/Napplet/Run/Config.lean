@@ -20,8 +20,10 @@ subscription push), `config.schemaError {error, code}`.
 
 The schema is decoded from JSON into `Schema`, which extends `NapConfig.Schema` with
 everything the Core Subset admits: `number`, homogeneous arrays of primitives
-(`items`, `minItems`, `maxItems`), `enum` on every primitive type, nested objects with
-`required` and their own `default` objects, and the annotations (`title`,
+(`items`, `minItems`, `maxItems`), `enum` on every primitive type and on arrays (whole
+value), nested objects with `required` and their own `default` objects, a boolean or
+schema-valued `additionalProperties` (undeclared members are never delivered), and the
+annotations (`title`,
 `description`, `format`, `enumDescriptions`, `x-napplet-secret`, `x-napplet-section`,
 `x-napplet-order`, `deprecationMessage`, `markdownDescription`, `$schema`, `$version`).
 Annotations are checked for type and otherwise passed to the host's settings UI in the
@@ -29,7 +31,10 @@ raw schema. Forbidden keywords map to `ref-not-allowed` (`$ref`, `$defs`,
 `definitions`), `pattern-not-allowed` (`pattern`) and `invalid-schema` (combinators,
 conditionals, `patternProperties`, `propertyNames`, `dependencies`,
 `dependentSchemas`, `unevaluatedProperties`, tuple `items`, and any other keyword
-outside the Core Subset other than `x-napplet-*`).
+outside the Core Subset other than `x-napplet-*`). A Core constraint on a type it does
+not apply to (`minimum` on a string, `minItems` on an object, ...) must be well-typed and
+is ignored, as in JSON Schema. A property with `x-napplet-secret: true` and a `default`
+is `secret-with-default` whatever its type.
 
 Values are JSON. Persisted values and the registered schema are keyed by the identity
 scope (`NapStorage.scopeFor cx.storage .shared`: manifest key and artifact hash) and
@@ -178,7 +183,10 @@ mutual
 /-- A Core Subset schema node. `sect` is `x-napplet-section`. -/
 inductive Schema where
   | leaf (l : Leaf) (dflt : Option Json) (secret : Bool) (sect : Option String)
-  | arr (item : Leaf) (minItems maxItems : Option Nat) (dflt : Option Json) (sect : Option String)
+  /-- A homogeneous array of primitives. `enum` lists the permitted whole array values
+  (JSON Schema `enum` compares the instance as a whole). -/
+  | arr (item : Leaf) (minItems maxItems : Option Nat) (enum : Option (List Json))
+      (dflt : Option Json) (sect : Option String)
   | obj (props : Props) (required : List String) (dflt : Option Json) (sect : Option String)
 inductive Props where
   | nil
@@ -217,7 +225,7 @@ end
 mutual
 /-- Every `x-napplet-section` declared in the schema. -/
 def Schema.sections : Schema → List String
-  | .leaf _ _ _ sec | .arr _ _ _ _ sec => sec.toList
+  | .leaf _ _ _ sec | .arr _ _ _ _ _ sec => sec.toList
   | .obj ps _ _ sec => sec.toList ++ ps.sections
 def Props.sections : Props → List String
   | .nil => []
@@ -241,8 +249,9 @@ def Leaf.ok (l : Leaf) (v : Json) : Bool :=
   | .str s => l.minLength.all (· ≤ s.length) && l.maxLength.all (s.length ≤ ·)
   | _ => true
 
-def arrOk (it : Leaf) (mn mx : Option Nat) : Json → Bool
-  | .arr xs => mn.all (· ≤ xs.length) && mx.all (xs.length ≤ ·) && xs.all it.ok
+def arrOk (it : Leaf) (mn mx : Option Nat) (en : Option (List Json)) : Json → Bool
+  | .arr xs => mn.all (· ≤ xs.length) && mx.all (xs.length ≤ ·) && xs.all it.ok &&
+      en.all (·.contains (.arr xs))
   | _ => false
 
 def reqOk (req : List String) (kvs : List (String × Json)) : Bool :=
@@ -253,7 +262,7 @@ mutual
 `required` member (undeclared members are never delivered, at any level). -/
 def Schema.valid : Schema → Json → Bool
   | .leaf l _ _ _, v => l.ok v
-  | .arr it mn mx _ _, v => arrOk it mn mx v
+  | .arr it mn mx en _ _, v => arrOk it mn mx en v
   | .obj ps req _ _, v =>
     match v with
     | .obj kvs => kvs.all (fun kv => ps.member kv.1 kv.2) && reqOk req kvs
@@ -280,7 +289,7 @@ and all its `required` members resolved. -/
 def Schema.resolve : Schema → Option Json → List Json → Option Json
   | .leaf l d sec _, p, anc =>
     if sec then p.filter l.ok else firstOk l.ok (p.toList ++ d.toList ++ anc)
-  | .arr it mn mx d _, p, anc => firstOk (arrOk it mn mx) (p.toList ++ d.toList ++ anc)
+  | .arr it mn mx en d _, p, anc => firstOk (arrOk it mn mx en) (p.toList ++ d.toList ++ anc)
   | .obj ps req d _, p, anc =>
     let kvs := ps.resolve p (d.toList ++ anc)
     if reqOk req kvs && (!kvs.isEmpty || (p.toList ++ d.toList ++ anc).any Json.isObj) then
@@ -394,16 +403,26 @@ def annotationsOk (j : Json) : Except Err Unit := do
       if ds.length ≠ es.length then throw (invalid "`enumDescriptions` must parallel `enum`")
     | _, _ => throw (invalid "`enumDescriptions` must parallel `enum`")
 
+/-- The Core constraints must be well-typed wherever they appear, even on a type they do
+not apply to (where they are then ignored). -/
+def constraintsOk (j : Json) : Except Err Unit := do
+  let _ ← numField j "minimum"
+  let _ ← numField j "maximum"
+  for k in ["minLength", "maxLength", "minItems", "maxItems"] do
+    let _ ← natField j k
+  pure ()
+
 def leafOf (j : Json) (ty : Prim) : Except Err Leaf := do
+  absent j ["items", "properties", "required", "additionalProperties"] "a primitive type"
+  -- Core constraints that do not apply to `ty` are well-typed but ignored, as JSON Schema
+  -- ignores them (NAP-CONFIG: `minimum`/`maximum` "apply to" numbers, `minLength`/
+  -- `maxLength` to strings, `minItems`/`maxItems` to arrays).
+  constraintsOk j
   let numeric := ty == .number || ty == .integer
-  absent j ["minItems", "maxItems", "items", "properties", "required", "additionalProperties"]
-    "a primitive type"
-  if !numeric then absent j ["minimum", "maximum"] "a non-numeric type"
-  if ty != .string then absent j ["minLength", "maxLength"] "a non-string type"
-  let minimum ← numField j "minimum"
-  let maximum ← numField j "maximum"
-  let minLength ← natField j "minLength"
-  let maxLength ← natField j "maxLength"
+  let minimum ← if numeric then numField j "minimum" else pure none
+  let maximum ← if numeric then numField j "maximum" else pure none
+  let minLength ← if ty == .string then natField j "minLength" else pure none
+  let maxLength ← if ty == .string then natField j "maxLength" else pure none
   let enum ← match j.get? "enum" with
     | none => pure none
     | some (.arr es) =>
@@ -433,18 +452,28 @@ def decodeNode : Nat → Bool → Json → Except Err Schema
     let secret := j.get? "x-napplet-secret" == some (.bool true)
     let dflt := j.get? "default"
     let sect := j.getStr? "x-napplet-section"
+    -- NAP-CONFIG: a property with both `x-napplet-secret: true` and `default` is rejected
+    -- with `secret-with-default`, whatever its type.
+    if secret && dflt.isSome then
+      throw (.secretWithDefault, "`x-napplet-secret` property declares a `default`")
     match j.getStr? "type" with
     | some "object" =>
       if secret then throw (invalid "`x-napplet-secret` applies only to strings")
-      absent j ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "items",
-        "enum"] "type `object`"
+      absent j ["items", "enum"] "type `object`"
+      constraintsOk j
       let props ← match j.get? "properties" with
         | none => pure []
         | some (.obj pkvs) => pure (dedupLast pkvs)
         | some _ => throw (invalid "`properties` must be an object")
+      -- A schema-valued `additionalProperties` must itself be a Core Subset schema. It is
+      -- accepted, but undeclared members are never delivered (or persisted), at any level:
+      -- dropping them keeps every delivered object valid under JSON Schema, which constrains
+      -- only additional members that are present, and follows NAP-CONFIG's rule that
+      -- settings "must not accrete unknown properties silently".
       match j.get? "additionalProperties" with
       | none | some (.bool _) => pure ()
-      | some _ => throw (invalid "`additionalProperties` must be a boolean")
+      | some ap@(.obj _) => let _ ← decodeNode fuel false ap
+      | some _ => throw (invalid "`additionalProperties` must be a boolean or a schema")
       let req ← match j.get? "required" with
         | none => pure []
         | some v =>
@@ -459,8 +488,8 @@ def decodeNode : Nat → Bool → Json → Except Err Schema
       pure (.obj (Props.ofList ps) req dflt sect)
     | some "array" =>
       if secret then throw (invalid "`x-napplet-secret` applies only to strings")
-      absent j ["minimum", "maximum", "minLength", "maxLength", "properties", "required",
-        "additionalProperties", "enum"] "type `array`"
+      absent j ["properties", "required", "additionalProperties"] "type `array`"
+      constraintsOk j
       let item ← match j.get? "items" with
         | some (.arr _) => throw (invalid "tuple-typed `items` are not in the Core Subset")
         | some it =>
@@ -470,13 +499,18 @@ def decodeNode : Nat → Bool → Json → Except Err Schema
         | none => throw (invalid "`items` must be one homogeneous schema")
       let mn ← natField j "minItems"
       let mx ← natField j "maxItems"
-      pure (.arr item mn mx dflt sect)
+      let en ← match j.get? "enum" with
+        | none => pure none
+        | some (.arr es) =>
+          if !es.isEmpty && es.all (fun e => match e with
+              | .arr xs => xs.all (Leaf.typeOk item.ty) | _ => false) then pure (some es)
+          else throw (invalid "`enum` must be a non-empty array of arrays of the item type")
+        | some _ => throw (invalid "`enum` must be an array")
+      pure (.arr item mn mx en dflt sect)
     | some t =>
       match primOf? t with
       | some ty =>
         if secret && ty != .string then throw (invalid "`x-napplet-secret` applies only to strings")
-        if secret && dflt.isSome then
-          throw (.secretWithDefault, "`x-napplet-secret` property declares a `default`")
         let l ← leafOf j ty
         pure (.leaf l dflt secret sect)
       | none => throw (invalid ("unsupported type `" ++ t ++ "`"))
@@ -668,7 +702,7 @@ theorem Schema.resolve_valid : ∀ (s : Schema) (p : Option Json) (anc : List Js
         · cases h; assumption
         · simp at h
     · exact firstOk_ok h
-  | .arr it mn mx d _, p, anc, v, h => by
+  | .arr it mn mx en d _, p, anc, v, h => by
     simp only [Schema.resolve] at h
     simp only [Schema.valid]
     exact firstOk_ok h
@@ -1107,6 +1141,40 @@ def nested := run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id\": \
 def nestedSub := run (Json.parse! "{ \"type\": \"config.subscribe\" }") nested.1
 #guard one (edit nestedSub.1 "{\"window\": 2, \"values\": {\"display\": {\"size\": 50, \"font\": \"mono\"}, \"tags\": [\"x\", \"y\", \"z\"]}}").2
   "{ \"type\": \"config.values\", \"values\": { \"display\": { \"size\": 12, \"font\": \"mono\" }, \"tags\": [\"a\"] } }"
+
+-- C2: a secret with a default is `secret-with-default` whatever its type
+#guard regCode "{ \"type\": \"object\", \"properties\": { \"n\": { \"type\": \"integer\", \"x-napplet-secret\": true, \"default\": 1 } } }" == some "secret-with-default"
+#guard regCode "{ \"type\": \"object\", \"properties\": { \"o\": { \"type\": \"object\", \"x-napplet-secret\": true, \"default\": {} } } }" == some "secret-with-default"
+#guard regCode "{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"x-napplet-secret\": true, \"default\": [] } } }" == some "secret-with-default"
+-- a non-string secret without a default is still `invalid-schema`
+#guard regCode "{ \"type\": \"object\", \"properties\": { \"n\": { \"type\": \"integer\", \"x-napplet-secret\": true } } }" == some "invalid-schema"
+
+-- C3: Core keywords on a type they do not apply to are ignored, not rejected
+#guard regCode "{ \"type\": \"object\", \"minimum\": 0, \"properties\": { \"s\": { \"type\": \"string\", \"minimum\": 1, \"minItems\": 2 }, \"n\": { \"type\": \"integer\", \"maxLength\": 3 }, \"b\": { \"type\": \"boolean\", \"maximum\": 1 }, \"a\": { \"type\": \"array\", \"items\": { \"type\": \"number\" }, \"minLength\": 1 } } }" == none
+-- ... but must still be well-typed
+#guard regCode "{ \"type\": \"object\", \"properties\": { \"s\": { \"type\": \"string\", \"minimum\": \"x\" } } }" == some "invalid-schema"
+-- an ignored constraint does not constrain: `minimum` on a string
+def ignoredMin := run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id\": \"m\", \"schema\": { \"type\": \"object\", \"properties\": { \"s\": { \"type\": \"string\", \"minimum\": 5, \"default\": \"x\" } } } }")
+#guard one (run (Json.parse! "{ \"type\": \"config.get\", \"id\": \"g\" }") ignoredMin.1).2
+  "{ \"type\": \"config.values\", \"id\": \"g\", \"values\": { \"s\": \"x\" } }"
+-- `enum` on an array: whole-value comparison
+def arrEnum := run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id\": \"ae\", \"schema\": { \"type\": \"object\", \"properties\": { \"tags\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"enum\": [[\"a\"], [\"a\", \"b\"]], \"default\": [\"a\"] } } } }")
+#guard one arrEnum.2 "{ \"type\": \"config.registerSchema.result\", \"id\": \"ae\", \"ok\": true }"
+def arrEnumSub := run (Json.parse! "{ \"type\": \"config.subscribe\" }") arrEnum.1
+#guard one (edit arrEnumSub.1 "{\"window\": 2, \"values\": {\"tags\": [\"b\"]}}").2
+  "{ \"type\": \"config.values\", \"values\": { \"tags\": [\"a\"] } }"
+#guard one (edit arrEnumSub.1 "{\"window\": 2, \"values\": {\"tags\": [\"a\", \"b\"]}}").2
+  "{ \"type\": \"config.values\", \"values\": { \"tags\": [\"a\", \"b\"] } }"
+#guard regCode "{ \"type\": \"object\", \"properties\": { \"t\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"enum\": [[1]] } } }" == some "invalid-schema"
+-- schema-valued `additionalProperties`: accepted (and itself checked); undeclared members
+-- are never delivered
+def apSchema := run (Json.parse! "{ \"type\": \"config.registerSchema\", \"id\": \"ap\", \"schema\": { \"type\": \"object\", \"additionalProperties\": { \"type\": \"string\" }, \"properties\": { \"o\": { \"type\": \"object\", \"additionalProperties\": { \"type\": \"integer\" }, \"properties\": { \"k\": { \"type\": \"integer\", \"default\": 1 } } } } } }")
+#guard one apSchema.2 "{ \"type\": \"config.registerSchema.result\", \"id\": \"ap\", \"ok\": true }"
+def apSub := run (Json.parse! "{ \"type\": \"config.subscribe\" }") apSchema.1
+#guard one (edit apSub.1 "{\"window\": 2, \"values\": {\"x\": \"y\", \"o\": {\"k\": 2, \"z\": 3}}}").2
+  "{ \"type\": \"config.values\", \"values\": { \"o\": { \"k\": 2 } } }"
+#guard regCode "{ \"type\": \"object\", \"additionalProperties\": { \"$ref\": \"#/x\" } }" == some "ref-not-allowed"
+#guard regCode "{ \"type\": \"object\", \"additionalProperties\": 1 }" == some "invalid-schema"
 
 -- Teardown drops the subscription only; values and schema stay with the scope
 #guard mentions (drop subd.1 5).1 5 == false && ((drop subd.1 5).1.schemas (scopeOf sampleCtx)).isSome
