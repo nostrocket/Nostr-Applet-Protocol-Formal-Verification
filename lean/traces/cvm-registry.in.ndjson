@@ -1,0 +1,6 @@
+{"config":{"cvm":{"registry":true},"display":{"devices":[{"id":"desk","width":800,"height":480,"type":"eink"}],"permitted":{"default":true}},"upload":{"rails":[{"rail":"nip96","server":"https://files.example.com/api/v2/media","returns":["https"]},{"rail":"blossom","server":"https://blossom.example.com","returns":["https","blossom"]}],"defaultRail":"nip96","maxBytes":104857600,"mimeTypes":["image/png","image/jpeg","application/pdf"]}},"host":{"hash":"test","sniff":"test"}}
+{"t":"create","w":1,"manifest":{"kind":35129,"pubkey":"0000000000000000000000000000000000000000000000000000000000000abc","content":"test napplet","tags":[["d","my-napplet"],["x","000000000000000000000000000000000000000000000000000000000001a9c9"]],"id":"0000000000000000000000000000000000000000000000000000000000000008"},"bytes":"bQ==","inst":1}
+{"t":"load","w":1}
+{"t":"hello","w":1,"ports":[7]}
+{"t":"message","port":7,"msg":{"type":"cvm.registry.describe","id":"s1","selector":{"family":"relatr"}}}
+{"t":"reply","tag":{"domain":"cvm","n":1},"reply":{"t":"json","json":{"entry":{"family":"relatr","schemaHashes":["a7f3d9..."],"selected":{"pubkey":"65a334...","relays":["wss://relay.example.com"]},"tools":[{"name":"search_profiles","schemaHash":"a7f3d9...","inputSchema":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}}]}}}}

@@ -1,6 +1,14 @@
 name = "napplet"
 version = "0.1.0"
-defaultTargets = ["Napplet"]
+defaultTargets = ["Napplet", "napplet-oracle", "napplet-tracegen"]
 
 [[lean_lib]]
 name = "Napplet"
+
+[[lean_exe]]
+name = "napplet-oracle"
+root = "OracleMain"
+
+[[lean_exe]]
+name = "napplet-tracegen"
+root = "TraceGen"

@@ -23,9 +23,15 @@ jobs:
       - name: Build and check proofs
         run: lake build
 
+      - name: Oracle traces (the E2E vectors through napplet-oracle, byte for byte)
+        run: |
+          .lake/build/bin/napplet-tracegen traces
+          git diff --exit-code -- traces
+          ./scripts/check_traces.sh
+
       - name: No sorry
         run: |
-          if grep -rnw sorry Napplet Napplet.lean; then
+          if grep -rnw sorry Napplet Napplet.lean OracleMain.lean TraceGen.lean; then
             echo "::error::sorry found"; exit 1
           fi
 

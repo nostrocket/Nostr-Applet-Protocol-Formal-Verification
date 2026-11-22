@@ -38,6 +38,9 @@ import Napplet.FMap
 import Napplet.Refine
 import Napplet.Codec
 import Napplet.Persist
+import Napplet.Sha256
+import Napplet.Oracle
+import Napplet.Test.Traces
 import Napplet.Binding
 import Napplet.Nip19
 import Napplet.BindingUri
