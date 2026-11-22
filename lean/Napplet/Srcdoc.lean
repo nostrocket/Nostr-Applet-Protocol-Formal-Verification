@@ -50,7 +50,34 @@ def isWs (c : Nat) : Bool := c == 9 || c == 10 || c == 12 || c == 13 || c == 32
 def isAlpha (c : Nat) : Bool := (65 ≤ c && c ≤ 90) || (97 ≤ c && c ≤ 122)
 def lower (c : Nat) : Nat := if 65 ≤ c && c ≤ 90 then c + 32 else c
 
-def codes (s : String) : Code := s.toUTF8.toList.map UInt8.toNat
+/-- UTF-8 encoding of one character (RFC 3629). -/
+def utf8Char (c : Char) : Code :=
+  if c.toNat < 0x80 then [c.toNat]
+  else if c.toNat < 0x800 then [0xC0 + c.toNat / 64, 0x80 + c.toNat % 64]
+  else if c.toNat < 0x10000 then
+    [0xE0 + c.toNat / 4096, 0x80 + c.toNat / 64 % 64, 0x80 + c.toNat % 64]
+  else [0xF0 + c.toNat / 262144, 0x80 + c.toNat / 4096 % 64, 0x80 + c.toNat / 64 % 64,
+    0x80 + c.toNat % 64]
+
+/-- UTF-8 encoding of a string (agrees with `String.toUTF8`: vectors below). -/
+def codes (s : String) : Code := s.toList.flatMap utf8Char
+
+/-- Byte 60 (`<`) only encodes the character `<`. -/
+theorem lt_mem_codes {s : String} (h : 60 ∈ codes s) : '<' ∈ s.toList := by
+  simp only [codes, List.mem_flatMap] at h
+  obtain ⟨c, hc, hm⟩ := h
+  have : c = '<' := by
+    unfold utf8Char at hm
+    by_cases h1 : c.toNat < 0x80
+    · simp only [h1, ↓reduceIte, List.mem_singleton] at hm
+      have h60 : c.toNat = ('<' : Char).toNat := by rw [← hm]; rfl
+      exact Char.toNat_inj.mp h60
+    · by_cases h2 : c.toNat < 0x800
+      · simp only [h1, h2, ↓reduceIte, List.mem_cons, List.mem_nil_iff, or_false] at hm; omega
+      · by_cases h3 : c.toNat < 0x10000
+        · simp only [h1, h2, h3, ↓reduceIte, List.mem_cons, List.mem_nil_iff, or_false] at hm; omega
+        · simp only [h1, h2, h3, ↓reduceIte, List.mem_cons, List.mem_nil_iff, or_false] at hm; omega
+  exact this ▸ hc
 
 /-- ASCII text as codes. -/
 def ascii (s : String) : Code := s.toList.map Char.toNat
@@ -739,6 +766,24 @@ theorem bootstrap_first (z : Code) (csp boot : String) (hs : safeText (codes boo
 /-- Safe as the text of the injected `<script>` element (`safeText` of its UTF-8 bytes). -/
 def scriptSafe (js : String) : Bool := safeText (codes js)
 
+/-- Text with no `<` is safe inside `<script>`: nothing can end or escape the element. -/
+theorem safeText_of_no_lt {b : Code} (h : 60 ∉ b) : safeText b = true := by
+  simp only [safeText, List.all_eq_true, List.mem_range, Bool.and_eq_true, Bool.not_eq_eq_eq_not,
+    Bool.not_true]
+  intro i hi
+  have hd : (b ++ scriptClose).drop i = b[i] :: (b.drop (i + 1) ++ scriptClose) := by
+    rw [List.drop_append_of_le_length (by omega), List.drop_eq_getElem_cons hi]; rfl
+  have hne : b[i] ≠ 60 := fun he => h (he ▸ List.getElem_mem hi)
+  rw [hd]
+  constructor
+  · simp only [closeAt, List.take_succ_cons]
+    unfold closeAtL; split <;> simp_all
+  · simp only [escAt, List.take_succ_cons]
+    unfold escAtL; split <;> simp_all
+
+theorem scriptSafe_of_no_lt {js : String} (h : '<' ∉ js.toList) : scriptSafe js = true :=
+  safeText_of_no_lt fun hm => h (lt_mem_codes hm)
+
 /-! ## The byte-level statements -/
 
 theorem codes_bytes (b : Bytes) : (b.map UInt8.toNat).map Nat.toUInt8 = b := by
@@ -757,6 +802,9 @@ theorem buildSrcdoc_bytes (b : Bytes) (csp boot : String) :
 /-! ## Vectors (adversarial documents) -/
 
 def ofStr (s : String) : Bytes := s.toUTF8.toList
+
+-- `codes` is UTF-8
+#guard ["", "abc", "é", "😀", "<script>", "€x"].all fun s => codes s == s.toUTF8.toList.map UInt8.toNat
 
 def outStr (doc : String) : String :=
   String.fromUTF8! (ByteArray.mk (buildSrcdoc (ofStr doc) "CSP" "B").toArray)

@@ -183,3 +183,6 @@ open Napplet
 #print axioms Srcdoc.bootstrap_first
 #print axioms Srcdoc.scriptData_safe
 #print axioms Bootstrap.srcdoc_order
+#print axioms Bootstrap.rawJs_api
+#print axioms Bootstrap.bootstrap_safe
+#print axioms Srcdoc.safeText_of_no_lt

@@ -30,10 +30,13 @@ napplet script. It implements `Binding.lean`:
   dropped (`Binding.receive`, `Binding.register`).
 
 The data tables in the script (`API`, `RESULTS`, `NO_RESULT`, `RETAINED`, `STICKY`,
-`RETIRED_LATE`, `ROUTE`) are literal text in the shipped script; only the exposure list is
-filled in. The vectors below parse them back out of the script text and compare them with
-`BindingApi.methods` and `Binding.lean`, check that the script posts exactly one hello, and that it is safe inside
-`<script>` (`Srcdoc.scriptSafe`: no `</script` and no `<!--`).
+`RETIRED_LATE`, `ROUTE`) are renderings of the Lean definitions they name, spliced between
+literal code (`rawJs`). Results:
+* `rawJs_api`: the script's method table is the rendering of `BindingApi.methods`;
+* `bootstrap_safe`: for every exposure, the script contains no `<`, so it is safe inside
+  `<script>` (`Srcdoc.safeText`), and `srcdoc_order` holds for the shipped `srcdoc`;
+* vectors parse the tables back out of the text, check them against `Binding.lean`, check
+  that the script posts exactly one hello, and that `noLt` leaves the script unchanged.
 -/
 
 namespace Napplet.Bootstrap
@@ -74,16 +77,30 @@ def routeJson : Json :=
       | some f => if acc.any (·.1 == t) then acc else acc ++ [(t, .str f)]
       | none => acc) [])
 
-def template : String := "(function () {
+/-! ### The script text
+
+`rawJs` is the script: literal code (`tpl0` … `tpl8`, which contain no `<`) around the
+JSON tables, each the rendering of the Lean definition it names. `rawJs_api` states that
+the method table in the script is `BindingApi.methods`. -/
+
+def tpl0 : String := "(function () {
   \"use strict\";
-  var EXPOSED = @EXPOSED@;
-  var API = {\"shell\":[[\"supports\",[\"local\"]],[\"domains\",[\"local\"]],[\"check\",[\"req\",\"shell.check\",false]],[\"services\",[\"local\"]],[\"ready\",[\"ready\",\"shell.ready\",\"shell.init\"]],[\"onReady\",[\"push\",\"shell.init\"]]],\"intent\":[[\"invoke\",[\"req\",\"intent.invoke\",false]],[\"open\",[\"local\"]],[\"available\",[\"req\",\"intent.available\",false]],[\"handlers\",[\"req\",\"intent.handlers\",false]],[\"onChanged\",[\"push\",\"intent.changed\"]],[\"onDelivery\",[\"push\",\"intent.deliver\"]],[\"launch\",[\"req\",\"intent.launch\",false]]],\"inc\":[[\"emit\",[\"fire\",\"inc.emit\"]],[\"on\",[\"req\",\"inc.subscribe\",false]],[\"channel.open\",[\"req\",\"inc.channel.open\",false]],[\"channel.onOpened\",[\"push\",\"inc.channel.opened\"]],[\"channel.list\",[\"req\",\"inc.channel.list\",false]],[\"channel.broadcast\",[\"fire\",\"inc.channel.broadcast\"]],[\"ChannelHandle.emit\",[\"fire\",\"inc.channel.emit\"]],[\"ChannelHandle.on\",[\"push\",\"inc.channel.event\"]],[\"ChannelHandle.onClosed\",[\"push\",\"inc.channel.closed\"]],[\"ChannelHandle.close\",[\"fire\",\"inc.channel.close\"]]],\"theme\":[[\"get\",[\"req\",\"theme.get\",false]],[\"onChanged\",[\"push\",\"theme.changed\"]]],\"identity\":[[\"getPublicKey\",[\"req\",\"identity.getPublicKey\",false]],[\"onChanged\",[\"push\",\"identity.changed\"]],[\"getRelays\",[\"req\",\"identity.getRelays\",false]],[\"getProfile\",[\"req\",\"identity.getProfile\",false]],[\"getFollows\",[\"req\",\"identity.getFollows\",false]],[\"getList\",[\"req\",\"identity.getList\",false]],[\"getZaps\",[\"req\",\"identity.getZaps\",false]],[\"getMutes\",[\"req\",\"identity.getMutes\",false]],[\"getBlocked\",[\"req\",\"identity.getBlocked\",false]],[\"getBadges\",[\"req\",\"identity.getBadges\",false]]],\"relay\":[[\"subscribe\",[\"req\",\"relay.subscribe\",false]],[\"publish\",[\"req\",\"relay.publish\",false]],[\"publishEncrypted\",[\"req\",\"relay.publishEncrypted\",false]],[\"query\",[\"req\",\"relay.query\",false]],[\"Subscription.close\",[\"fire\",\"relay.close\"]]],\"storage\":[[\"getItem\",[\"req\",\"storage.get\",false]],[\"setItem\",[\"req\",\"storage.set\",false]],[\"removeItem\",[\"req\",\"storage.remove\",false]],[\"keys\",[\"req\",\"storage.keys\",false]],[\"instance.getItem\",[\"req\",\"storage.get\",true]],[\"instance.setItem\",[\"req\",\"storage.set\",true]],[\"instance.removeItem\",[\"req\",\"storage.remove\",true]],[\"instance.keys\",[\"req\",\"storage.keys\",true]]],\"keys\":[[\"registerAction\",[\"req\",\"keys.registerAction\",false]],[\"unregisterAction\",[\"fire\",\"keys.unregisterAction\"]],[\"forward\",[\"fire\",\"keys.forward\"]],[\"onAction\",[\"local\"]]],\"media\":[[\"createSession\",[\"req\",\"media.session.create\",false]],[\"updateSession\",[\"fire\",\"media.session.update\"]],[\"destroySession\",[\"fire\",\"media.session.destroy\"]],[\"reportState\",[\"fire\",\"media.state\"]],[\"reportCapabilities\",[\"fire\",\"media.capabilities\"]],[\"command\",[\"fire\",\"media.command\"]],[\"onState\",[\"push\",\"media.state\"]],[\"onCapabilities\",[\"push\",\"media.capabilities\"]],[\"onCommand\",[\"push\",\"media.command\"]],[\"onControls\",[\"push\",\"media.controls\"]],[\"onEnded\",[\"push\",\"media.session.ended\"]]],\"notify\":[[\"send\",[\"req\",\"notify.send\",false]],[\"dismiss\",[\"fire\",\"notify.dismiss\"]],[\"badge\",[\"fire\",\"notify.badge\"]],[\"registerChannel\",[\"fire\",\"notify.registerChannel\"]],[\"requestPermission\",[\"req\",\"notify.requestPermission\",false]],[\"onAction\",[\"push\",\"notify.action\"]],[\"onClicked\",[\"push\",\"notify.clicked\"]],[\"onDismissed\",[\"push\",\"notify.dismissed\"]],[\"onControls\",[\"push\",\"notify.controls\"]]],\"resource\":[[\"info\",[\"req\",\"resource.info\",false]],[\"bytes\",[\"req\",\"resource.bytes\",false]],[\"bytesMany\",[\"req\",\"resource.bytesMany\",false]]],\"config\":[[\"registerSchema\",[\"req\",\"config.registerSchema\",false]],[\"get\",[\"req\",\"config.get\",false]],[\"subscribe\",[\"req\",\"config.subscribe\",false]],[\"onSchemaError\",[\"push\",\"config.schemaError\"]],[\"openSettings\",[\"fire\",\"config.openSettings\"]],[\"schema\",[\"local\"]]],\"upload\":[[\"info\",[\"req\",\"upload.info\",false]],[\"upload\",[\"req\",\"upload.upload\",false]],[\"status\",[\"req\",\"upload.status\",false]],[\"onStatus\",[\"push\",\"upload.status.changed\"]]],\"value\":[[\"send\",[\"req\",\"value.send\",false]],[\"quote\",[\"req\",\"value.quote\",false]],[\"status\",[\"req\",\"value.status\",false]],[\"onStatus\",[\"push\",\"value.status.changed\"]]],\"outbox\":[[\"getEvent\",[\"req\",\"outbox.getEvent\",false]],[\"query\",[\"req\",\"outbox.query\",false]],[\"subscribe\",[\"req\",\"outbox.subscribe\",false]],[\"publish\",[\"req\",\"outbox.publish\",false]],[\"resolveRelays\",[\"req\",\"outbox.resolveRelays\",false]]],\"cvm\":[[\"discover\",[\"req\",\"cvm.discover\",false]],[\"request\",[\"req\",\"cvm.request\",false]],[\"listTools\",[\"local\"]],[\"callTool\",[\"local\"]],[\"listResources\",[\"local\"]],[\"readResource\",[\"local\"]],[\"close\",[\"req\",\"cvm.close\",false]],[\"onEvent\",[\"push\",\"cvm.event\"]],[\"registry.list\",[\"req\",\"cvm.registry.list\",false]],[\"registry.has\",[\"req\",\"cvm.registry.has\",false]],[\"registry.describe\",[\"req\",\"cvm.registry.describe\",false]],[\"registry.call\",[\"req\",\"cvm.registry.call\",false]]],\"link\":[[\"open\",[\"req\",\"link.open\",false]]],\"pow\":[[\"mine\",[\"req\",\"pow.mine\",false]],[\"mineAndPublish\",[\"req\",\"pow.mineAndPublish\",false]],[\"queue\",[\"req\",\"pow.queue\",false]],[\"job\",[\"req\",\"pow.job\",false]],[\"hashrate\",[\"req\",\"pow.hashrate\",false]],[\"cancel\",[\"req\",\"pow.cancel\",false]],[\"pause\",[\"req\",\"pow.pause\",false]],[\"resume\",[\"req\",\"pow.resume\",false]],[\"formatHashRate\",[\"local\"]]],\"display\":[[\"list\",[\"req\",\"display.list\",false]],[\"push\",[\"req\",\"display.push\",false]]]};
-  var RESULTS = {\"resource.info\":[\"resource.info.result\",\"resource.info.error\"],\"resource.bytes\":[\"resource.bytes.result\",\"resource.bytes.error\"],\"resource.bytesMany\":[\"resource.bytesMany.result\",\"resource.bytesMany.error\"],\"config.get\":[\"config.values\"]};
-  var NO_RESULT = [\"relay.subscribe\",\"relay.close\",\"outbox.subscribe\",\"outbox.close\"];
-  var RETAINED = [\"intent.deliver\",\"inc.channel.opened\",\"inc.channel.event\",\"inc.channel.closed\",\"shell.init\",\"media.session.ended\"];
-  var STICKY = [\"shell.init\",\"inc.channel.closed\",\"media.session.ended\"];
-  var RETIRED_LATE = [\"media.state\",\"media.capabilities\",\"media.command\",\"media.controls\"];
-  var ROUTE = {\"inc.channel.event\":\"channelId\",\"inc.channel.closed\":\"channelId\",\"media.state\":\"sessionId\",\"media.capabilities\":\"sessionId\",\"media.command\":\"sessionId\",\"media.controls\":\"sessionId\",\"media.session.ended\":\"sessionId\",\"relay.event\":\"subId\",\"relay.eose\":\"subId\",\"relay.closed\":\"subId\",\"outbox.event\":\"subId\",\"outbox.closed\":\"subId\",\"pow.state\":\"jobId\",\"pow.progress\":\"jobId\",\"pow.done\":\"jobId\",\"pow.error\":\"jobId\",\"inc.event\":\"topic\"};
+  var EXPOSED = "
+def tpl1 : String := ";
+  var API = "
+def tpl2 : String := ";
+  var RESULTS = "
+def tpl3 : String := ";
+  var NO_RESULT = "
+def tpl4 : String := ";
+  var RETAINED = "
+def tpl5 : String := ";
+  var STICKY = "
+def tpl6 : String := ";
+  var RETIRED_LATE = "
+def tpl7 : String := ";
+  var ROUTE = "
+def tpl8 : String := ";
   var channel = new MessageChannel();
   var port = channel.port1;
   var next = 0;
@@ -154,11 +171,9 @@ def template : String := "(function () {
   }
   function install(obj, path, fn) {
     var parts = path.split(\".\");
-    for (var i = 0; i < parts.length - 1; i++) {
-      if (!obj[parts[i]]) { obj[parts[i]] = {}; }
-      obj = obj[parts[i]];
-    }
-    obj[parts[parts.length - 1]] = fn;
+    var last = parts.pop();
+    parts.forEach(function (q) { if (!obj[q]) { obj[q] = {}; } obj = obj[q]; });
+    obj[last] = fn;
   }
   var napplet = {};
   EXPOSED.forEach(function (d) {
@@ -174,10 +189,42 @@ def template : String := "(function () {
 })();
 "
 
-/-- The bootstrap script for a napplet exposed to `exposed`: the template with the
-exposure list filled in. Every other table is literal text in `template`. -/
-def bootstrapJs (exposed : List Domain) : String :=
-  template.replace "@EXPOSED@" (Json.strs (exposed.map Domain.name)).render
+/-- The exposure list as JSON. -/
+def exposedJson (exposed : List Domain) : String := (Json.strs (exposed.map Domain.name)).render
+
+def rawJs (exposed : List Domain) : String :=
+  tpl0 ++ exposedJson exposed ++ tpl1 ++ apiJson.render ++ tpl2 ++ resultsJson.render ++ tpl3 ++ (Json.strs Binding.noResult).render ++ tpl4 ++ (Json.strs Binding.retainedTypes).render ++ tpl5 ++ (Json.strs Binding.stickyTypes).render ++ tpl6 ++ (Json.strs Binding.retiredLateTypes).render ++ tpl7 ++ routeJson.render ++ tpl8
+
+/-- **The script's method table is `BindingApi.methods`**: the text after `var API = ` is
+the rendering of `apiJson`, which lists `BindingApi.methods` in table order. -/
+theorem rawJs_api (exposed : List Domain) :
+    tpl1 = ";\n  var API = " ∧
+    rawJs exposed = (tpl0 ++ exposedJson exposed ++ tpl1) ++ apiJson.render ++
+      (tpl2 ++ resultsJson.render ++ tpl3 ++ (Json.strs Binding.noResult).render ++ tpl4 ++
+        (Json.strs Binding.retainedTypes).render ++ tpl5 ++ (Json.strs Binding.stickyTypes).render ++
+        tpl6 ++ (Json.strs Binding.retiredLateTypes).render ++ tpl7 ++ routeJson.render ++ tpl8) := by
+  refine ⟨rfl, ?_⟩
+  simp only [rawJs, String.append_assoc]
+
+/-- Replace every `<` by the JSON/JavaScript string escape `\u003c`. The code in `rawJs`
+has no `<` (vector below), so this only touches `<` inside JSON strings, where the escape
+means the same character. -/
+def noLt (s : String) : String :=
+  String.ofList (s.toList.flatMap fun c => if c = '<' then "\\u003c".toList else [c])
+
+theorem noLt_spec (s : String) : '<' ∉ (noLt s).toList := by
+  simp only [noLt, String.toList_ofList, List.mem_flatMap, not_exists, not_and]
+  intro c _
+  split
+  · decide
+  · rename_i h; simp only [List.mem_singleton]; exact fun e => h e.symm
+
+/-- The bootstrap script for a napplet exposed to `exposed`. -/
+def bootstrapJs (exposed : List Domain) : String := noLt (rawJs exposed)
+
+/-- **The bootstrap is safe inside `<script>`, for every exposure.** -/
+theorem bootstrap_safe (exposed : List Domain) : Srcdoc.scriptSafe (bootstrapJs exposed) = true :=
+  Srcdoc.scriptSafe_of_no_lt (noLt_spec _)
 
 /-! ### Checks -/
 
@@ -227,20 +274,9 @@ end Napplet.Bootstrap
 
 namespace Napplet.Bootstrap
 
-/-- The bootstrap actually injected: the script, provided it is safe inside `<script>`
-(it is: vector below), else nothing. -/
-def safeJs (exposed : List Domain) : String :=
-  if Srcdoc.scriptSafe (bootstrapJs exposed) then bootstrapJs exposed else ""
-
-theorem safeJs_safe (exposed : List Domain) : Srcdoc.safeText (Srcdoc.codes (safeJs exposed)) = true := by
-  unfold safeJs
-  split
-  · rename_i h; exact h
-  · simp [Srcdoc.safeText, Srcdoc.codes]
-
 /-- The `srcdoc` the host builds for verified bytes and an exposure set. -/
 def srcdoc (bytes : Bytes) (exposed : List Domain) : Bytes :=
-  Srcdoc.buildSrcdoc bytes Srcdoc.baselineCsp (safeJs exposed)
+  Srcdoc.buildSrcdoc bytes Srcdoc.baselineCsp (bootstrapJs exposed)
 
 /-- **The shipped `srcdoc`.** In parse order: element-free napplet tokens, a `<head>`
 start tag, the baseline CSP `<meta>`, the bootstrap `<script>`, exactly the bootstrap
@@ -248,21 +284,22 @@ text, the injected `</script>`, then the napplet's remaining bytes. -/
 theorem srcdoc_order (bytes : Bytes) (exposed : List Domain) :
     ∃ ts h p q, (∀ t ∈ ts, t.allowed = true) ∧ h.isHead = true ∧
       Srcdoc.stripBom (bytes.map UInt8.toNat) = p ++ q ∧
-      srcdoc bytes exposed = (Srcdoc.buildCodes (bytes.map UInt8.toNat) Srcdoc.baselineCsp (safeJs exposed)).map Nat.toUInt8 ∧
-      Srcdoc.lexR (ts.length + 3) (Srcdoc.buildCodes (bytes.map UInt8.toNat) Srcdoc.baselineCsp (safeJs exposed)) =
+      srcdoc bytes exposed = (Srcdoc.buildCodes (bytes.map UInt8.toNat) Srcdoc.baselineCsp (bootstrapJs exposed)).map Nat.toUInt8 ∧
+      Srcdoc.lexR (ts.length + 3) (Srcdoc.buildCodes (bytes.map UInt8.toNat) Srcdoc.baselineCsp (bootstrapJs exposed)) =
         (ts ++ [h, .startTag (Srcdoc.ascii "meta") (Srcdoc.cspMeta Srcdoc.baselineCsp),
                 .startTag (Srcdoc.ascii "script") Srcdoc.scriptOpen],
-         Srcdoc.codes (safeJs exposed) ++ Srcdoc.scriptClose ++ q) ∧
-      Srcdoc.scriptData (Srcdoc.codes (safeJs exposed) ++ Srcdoc.scriptClose ++ q) =
-        some (Srcdoc.codes (safeJs exposed), Srcdoc.scriptClose ++ q) ∧
+         Srcdoc.codes (bootstrapJs exposed) ++ Srcdoc.scriptClose ++ q) ∧
+      Srcdoc.scriptData (Srcdoc.codes (bootstrapJs exposed) ++ Srcdoc.scriptClose ++ q) =
+        some (Srcdoc.codes (bootstrapJs exposed), Srcdoc.scriptClose ++ q) ∧
       Srcdoc.step (Srcdoc.scriptClose ++ q) = some (.endTag (Srcdoc.ascii "script"), Srcdoc.scriptClose, q) := by
   obtain ⟨ts, h, p, q, h1, h2, h3, h4, h5, h6⟩ :=
-    Srcdoc.bootstrap_first (bytes.map UInt8.toNat) Srcdoc.baselineCsp (safeJs exposed) (safeJs_safe exposed)
+    Srcdoc.bootstrap_first (bytes.map UInt8.toNat) Srcdoc.baselineCsp (bootstrapJs exposed) (bootstrap_safe exposed)
   exact ⟨ts, h, p, q, h1, h2, h3, rfl, h4, h5, h6⟩
 
 -- the real script is the one injected
-#guard safeJs allDomains == js
-#guard safeJs [.storage] == bootstrapJs [.storage]
+-- `noLt` changes nothing: the script has no `<` at all
+#guard (rawJs allDomains).toList.all (· ≠ '<')
+#guard bootstrapJs allDomains == rawJs allDomains
 
 -- end to end: the baseline CSP and the real bootstrap come first in head
 #guard
