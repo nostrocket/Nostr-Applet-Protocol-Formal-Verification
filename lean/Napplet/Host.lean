@@ -48,11 +48,13 @@ and the browser.
   (raw schema and version, per scope) and values (per scope), NAP-INTENT default
   handlers (per archetype), NAP-LINK rules (per manifest key), NAP-UPLOAD consent
   (per manifest key), and the remaining balances of NAP-VALUE and NAP-CVM
-  allowances. The host keeps `Persist.persist s` (JSON: `Persist.encPersisted`) and
+  allowances. The host keeps `s.persist` (`RtState.persist`; `Persist.persist` on the
+  finite state; JSON: `Persist.encPersisted`) and
   writes it after every step that changes it, before applying that step's outputs,
   so a crash never loses an acknowledged write or re-spends an allowance. Restore
   entry point: on start-up the host decodes its record (`Persist.decPersisted`),
-  checks it (`Persisted.check`), and starts from `Persist.restore cfg names p` (the
+  which only accepts a canonical record, checks it against the storage quota
+  (`Persisted.withinQuota`), and starts from `Persist.restore cfg names p` (the
   finite state, `RtState.restore cfg p` in the model) instead of `RtState.init`.
   A restored state has no frame, binding, grant, port or per-endpoint state
   (`Persist.restore_clean`); the host then re-sends the theme, the user and NAP host

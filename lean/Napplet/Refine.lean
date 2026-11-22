@@ -723,12 +723,15 @@ def ShellState'.abs (s : ShellState') : ShellState where
 structure StorageSt' where
   store : FMap Scope KV
   quota : Nat
+  keys : List Scope
 
 /-- NAP-CONFIG's component state with finite schemas and values. -/
 structure ConfigSt' where
   schemas : FMap Scope (Option Run.Config.Reg)
   values : FMap Scope (Option Json)
   subs : List PortId
+  schemaKeys : List Scope
+  valueKeys : List Scope
 
 /-- NAP-DISPLAY's component state with a finite framebuffer keyed by (display, pixel). -/
 structure DisplaySt' where
@@ -777,7 +780,7 @@ def abs (s : RtState') : RtState where
   shellNap := s.shellNap
   theme := s.theme
   identity := s.identity
-  storage := { store := s.storage.store.get, quota := s.storage.quota }
+  storage := { store := s.storage.store.get, quota := s.storage.quota, keys := s.storage.keys }
   inc := s.inc
   intent := s.intent
   notify := s.notify
@@ -787,7 +790,8 @@ def abs (s : RtState') : RtState where
   relay := s.relay
   outbox := s.outbox
   media := s.media
-  config := { schemas := s.config.schemas.get, values := s.config.values.get, subs := s.config.subs }
+  config := { schemas := s.config.schemas.get, values := s.config.values.get, subs := s.config.subs,
+              schemaKeys := s.config.schemaKeys, valueKeys := s.config.valueKeys }
   resource := s.resource
   upload := s.upload
   link := s.link
@@ -878,7 +882,7 @@ def reify (s : RtState') (i : Input) (S t : RtState) (outs : List Runtime.Output
     theme := t.theme
     identity := t.identity
     storage := { store := FMap.tab [] keepNe (s.storage.store.keys ++ sc) t.storage.store,
-                 quota := t.storage.quota }
+                 quota := t.storage.quota, keys := t.storage.keys }
     inc := t.inc
     intent := t.intent
     notify := t.notify
@@ -891,7 +895,7 @@ def reify (s : RtState') (i : Input) (S t : RtState) (outs : List Runtime.Output
     media := t.media
     config := { schemas := FMap.tab none Option.isSome (s.config.schemas.keys ++ sc) t.config.schemas,
                 values := FMap.tab none Option.isSome (s.config.values.keys ++ sc) t.config.values,
-                subs := t.config.subs }
+                subs := t.config.subs, schemaKeys := t.config.schemaKeys, valueKeys := t.config.valueKeys }
     resource := t.resource
     upload := t.upload
     link := t.link
@@ -967,9 +971,9 @@ theorem abs_reify {s : RtState'} {i : Input} {t : RtState} {outs : List Runtime.
   cases tsh with
   | mk tf tb tg =>
   cases tstorage with
-  | mk tstore tquota =>
+  | mk tstore tquota tkeys =>
   cases tconfig with
-  | mk tsch tval tsubs =>
+  | mk tsch tval tsubs tsk tvk =>
   cases tdisplay with
   | mk dcfg ddev doff dfb =>
   simp only at hfr hrem hbi hgr hin hna hst hsc hva hfb
@@ -1109,7 +1113,7 @@ def init' (cfg : Config) (names : FMap WindowId (Option String)) : RtState' wher
   shellNap := Run.Shell.St.init cfg.shell
   theme := Run.Theme.St.init
   identity := Run.Identity.St.init
-  storage := { store := .const [], quota := cfg.storageQuota }
+  storage := { store := .const [], quota := cfg.storageQuota, keys := [] }
   inc := Run.Inc.St.init cfg.incCfg
   intent := Run.Intent.St.init cfg.intentCfg
   notify := Run.Notify.St.init cfg.notifyCfg
@@ -1119,7 +1123,7 @@ def init' (cfg : Config) (names : FMap WindowId (Option String)) : RtState' wher
   relay := Run.Relay.St.init cfg.relayCfg
   outbox := Run.Outbox.St.init cfg.outboxCfg
   media := Run.Media.St.init cfg.mediaCfg
-  config := { schemas := .const none, values := .const none, subs := [] }
+  config := { schemas := .const none, values := .const none, subs := [], schemaKeys := [], valueKeys := [] }
   resource := Run.Resource.St.init cfg.resourceCfg
   upload := Run.Upload.St.init cfg.uploadCfg
   link := Run.Link.St.init cfg.linkCfg

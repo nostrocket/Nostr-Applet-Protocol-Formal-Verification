@@ -25,7 +25,8 @@ follows live state (`Refine.live_keys` and the other memory theorems).
 {"config": {...}, "host": {...}, "restore": <Persisted>?, "emitPersisted": true?}
 ```
 
-`restore` starts from `Persist.restore` (after `Persisted.check`) instead of `init'`.
+`restore` starts from `Persist.restore` instead of `init'`; the record must be canonical
+(`decPersisted`) and within the storage quota (`Persisted.withinQuota`).
 
 ## `config`: the finite form of `Runtime.Config`
 
@@ -403,8 +404,8 @@ def decHeader (j : Json) : Except String Session := do
     | none => pure (Refine.init' cfg names)
     | some pj => do
       let p ← Persist.decPersisted pj
-      if p.check cfg then pure (Persist.restore cfg names p)
-      else .error "restore: the persisted record fails Persisted.check"
+      if p.withinQuota cfg then pure (Persist.restore cfg names p)
+      else .error "restore: a stored value exceeds the storage quota"
   pure { host, cfg, state := st, emit := boolOf j "emitPersisted" false }
 
 /-- One input line: the new session and the output line. -/

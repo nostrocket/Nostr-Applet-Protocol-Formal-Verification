@@ -165,7 +165,8 @@ open Napplet
 #print axioms Persist.Restored.quota
 #print axioms Persist.Reachable.quota
 #print axioms Persist.Reachable''.abs
-#print axioms Persist.Persisted.check_wf
+#print axioms Persist.persist_restore'
+#print axioms Persist.WF.restore
 -- JSON codecs of the runtime interface
 #print axioms Codec.decInput_enc
 #print axioms Codec.decOutput_enc

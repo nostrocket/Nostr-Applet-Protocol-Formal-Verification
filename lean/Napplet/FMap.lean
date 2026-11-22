@@ -77,6 +77,31 @@ theorem nodup_dedup {α : Type} [DecidableEq α] : ∀ (l : List α), (dedup l).
     · rename_i hx
       exact List.nodup_cons.mpr ⟨fun h => hx (mem_dedup.mp h), nodup_dedup l⟩
 
+theorem dedup_of_nodup {α : Type} [DecidableEq α] : ∀ {l : List α}, l.Nodup → dedup l = l
+  | [], _ => rfl
+  | a :: l, h => by
+    have h' := List.nodup_cons.mp h
+    simp only [dedup, h'.1, ↓reduceIte, dedup_of_nodup h'.2]
+
+/-- The keys of a `filterMap` that keeps each key are a sublist of the keys it ran over. -/
+theorem fst_filterMap_sub {α β : Type} {f : α → Option (α × β)} (hf : ∀ k e, f k = some e → e.1 = k) :
+    ∀ (l : List α), ((l.filterMap f).map Prod.fst).Sublist l
+  | [] => List.Sublist.slnil
+  | k :: l => by
+    cases hk : f k with
+    | none => simp only [List.filterMap_cons, hk]; exact (fst_filterMap_sub hf l).cons k
+    | some e =>
+      simp only [List.filterMap_cons, hk, List.map_cons, hf k e hk]
+      exact (fst_filterMap_sub hf l).cons_cons k
+
+/-- A `filterMap` over the keys of `l` that gives back each entry of `l` is `l`. -/
+theorem filterMap_fst_eq {α β : Type} {f : α → Option (α × β)} :
+    ∀ (l : List (α × β)), (∀ e ∈ l, f e.1 = some e) → (l.map Prod.fst).filterMap f = l
+  | [], _ => rfl
+  | e :: l, h => by
+    simp only [List.map_cons, List.filterMap_cons, h e (by simp)]
+    rw [filterMap_fst_eq l (fun e' he' => h e' (List.mem_cons_of_mem _ he'))]
+
 /-! ## Finite maps with a default -/
 
 /-- A finite map: `entries` with a default for every other key. -/

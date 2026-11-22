@@ -249,7 +249,8 @@ def shaTrace : Trace :=
 def restoreTrace : Trace :=
   let bytes : Bytes := "my-napplet".toList.map fun c => c.toNat.toUInt8
   let sc : NapStorage.Scope := ⟨.named publisher "my-napplet", fakeHash bytes, none⟩
-  let p : Persist.Persisted := ⟨[(sc, [("theme", "dark")])], [], [], [], [], [], [], []⟩
+  let p : Persist.Persisted :=
+    (Persist.Persisted.ofData? ⟨[(sc, [("theme", "dark")])], [], [], [], [], [], [], []⟩).getD Persist.Persisted.empty
   let hdr := "{\"config\":{},\"host\":{\"hash\":\"test\",\"sniff\":\"test\"},\"restore\":" ++
     (Persist.encPersisted p).render ++ "}"
   ⟨"restore", hdr, none,

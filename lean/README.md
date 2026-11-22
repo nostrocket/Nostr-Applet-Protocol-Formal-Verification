@@ -3,7 +3,7 @@
 A machine-checked, executable model of a napplet shell: the NIP-5D core, all
 nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
 together, the host interface, and the napplet-side bootstrap and binding.
-1092 theorems and 846 evaluated vectors (124 of them end to end through the
+1111 theorems and 848 evaluated vectors (124 of them end to end through the
 composed runtime, all of which also run byte for byte through the `napplet-oracle`
 executable as 43 traces). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
 but the model was built from the upstream texts at the commits listed below.
@@ -83,10 +83,14 @@ finite JSON form.
 `Persisted` is everything durable: NAP-STORAGE values, NAP-CONFIG schemas (raw JSON and
 version) and values, NAP-INTENT defaults, NAP-LINK rules, NAP-UPLOAD consent, and
 NAP-VALUE and NAP-CVM allowance balances, each as an association list keyed by scope,
-manifest key, archetype or catalog id. After every step that changes `persist s`, the
-host stores it (`encPersisted`); on start-up it decodes the record, runs
-`Persisted.check`, and starts from `restore cfg names p` (`RtState.restore cfg p` in the
-model) instead of `init`. `persist_restore` gives the record back; `restore_clean` says
+manifest key, archetype or catalog id, and canonical by construction (distinct keys, no
+empty entry, every schema registers). `RtState.persist` reads it from the model's state
+(the STORAGE and CONFIG components keep the scopes they wrote). After every step that
+changes `s.persist`, the host stores it (`encPersisted`); on start-up it decodes the
+record (`decPersisted` accepts only canonical records), checks the storage quota
+(`Persisted.withinQuota`), and starts from `restore cfg names p` (`RtState.restore cfg p`
+in the model) instead of `init`. `persist_restore` gives every record back, with no
+hypothesis; `restore_clean` says
 nothing per session survives; `Restored.*` restate the headline safety theorems for
 every state reached from a restored one; `Quota.restore` keeps the storage quota.
 
@@ -255,7 +259,10 @@ The amendments: `Run.Shell.check_one_reply` (one result, no call or effect),
   `ports_bound`, `components_bound`, `removed_length_le` (with `Ivs.length_le`).
 - `Persist.persist_restore`, `decPersisted_enc`, `restore_clean`, `Inv.restore`,
   `Restored.inv` and the `Restored.*` headline theorems, `Restored.quota`,
-  `Reachable.quota`, `Reachable''.abs`, `Persisted.check_wf`.
+  `Reachable.quota`, `Reachable''.abs`, `persist_restore'`, `WF.restore`.
+- `Srcdoc.parse_order`, `bootstrap_first` (the tokenizer reads exactly the bootstrap as the
+  script's text, then the injected `</script>`, then napplet bytes), `scriptData_safe`,
+  `Bootstrap.srcdoc_order` (the same for the shipped `srcdoc`, unconditionally).
 - `Codec.dec…_enc…`: every type crossing the runtime boundary (`Input`, `Output`, `Call`,
   `Reply`, `Effect`, `HostEvent`, `ManifestEvent`, `NostrEvent`, `UnsignedEvent`,
   `FetchOutcome`, `Identity`, `ManifestError`, `CallTag`) decodes from its encoding.
@@ -648,12 +655,14 @@ the model.
     runtime session.
 
 55. **CONFIG schemas persist as text.** A schema is stored as its raw JSON and version and
-    registered again on restore; `Persisted.check` rejects a record whose schema does not
-    register to its stored version.
+    registered again on restore. A record is canonical: distinct keys per field, no empty
+    store entry, and every schema registers to its stored version; `decPersisted` rejects
+    any other, and `RtState.persist` only produces canonical records.
 
-56. **Persisting goes through `RtState'`.** The model's store is a function and cannot be
-    enumerated, so `persist` reads the finite representation; `RtState.restore` is the same
-    restore on the model's state (`abs_restore`).
+56. **Components remember which scopes they wrote.** The model's store, schemas and values
+    are functions, which cannot be enumerated, so NAP-STORAGE keeps `St.keys` (scopes with
+    stored values, first-write order, erased when emptied) and NAP-CONFIG keeps
+    `St.schemaKeys` and `St.valueKeys`. `RtState.persist` reads the record through them.
 
 57. **Removed windows are intervals.** The memory bound in windows assumes the host numbers
     windows consecutively; with any other numbering the cost is the number of gaps.
@@ -685,9 +694,12 @@ the model.
     `Subscription.close`) and rows the tables mark local, helper or sugar are not installed
     on the namespace.
 
-64. **Script data.** The tokenizer does not model the script data states. Instead the
-    bootstrap text is checked to contain no `</script` and no `<!--` (`Srcdoc.scriptSafe`),
-    so its element ends at the injected `</script>`.
+64. **Script data.** After the bootstrap's `<script>` start tag the model follows the
+    script data state (`Srcdoc.scriptData`): the text ends at `</script` followed by
+    whitespace, `/` or `>`. `<!--` would enter the escaped states, which the model does not
+    follow; `safeText` rules it out for the injected text (including where it meets the
+    injected `</script>`), and `Bootstrap.safeJs` injects the bootstrap only if it is safe
+    (it is: vector), so `Bootstrap.srcdoc_order` needs no hypothesis.
 
 ## Not modelled yet
 

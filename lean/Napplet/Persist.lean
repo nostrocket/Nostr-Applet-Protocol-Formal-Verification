@@ -29,21 +29,25 @@ subscriptions, counters (identifiers are unique per runtime session), the theme 
 user (the host re-sends them), the display device list and framebuffer, and the intent
 catalog (host events).
 
-All maps are finite association lists. `persist` and `restore` work on the finite
-representation `RtState'`; `RtState.restore` is the same restore on the model's state.
-The model's function-typed store cannot be enumerated, so persisting goes through
-`RtState'` (`persist_abs` relates the two).
+All maps are finite association lists. A `Persisted` is canonical by construction (distinct
+keys per field, no empty store entry, every schema registers to its stored version);
+the decoder checks it. `RtState.persist` reads the model's state: the NAP-STORAGE and
+NAP-CONFIG components keep the scopes they wrote (`St.keys`, `St.schemaKeys`,
+`St.valueKeys`), so the record is computable. `RtState.restore` and `Persist.restore` (on
+`RtState'`) start a session from a record; `persist` on `RtState'` is `RtState.persist` of
+its abstraction.
 
 Main results:
-* `persist_restore`: `persist (restore cfg names p) = p` for well-formed `p`;
+* `persist_restore`: `(RtState.restore cfg p).persist = p` for every record, and
+  `persist_restore'` for the finite representation;
 * `decPersisted_enc`: the JSON codec round-trips;
 * `restore_clean`: restore revives no port, window, binding, grant or per-endpoint state;
 * `Inv.restore`, `Restored.inv`: a restored state satisfies the composed invariant, and
   so does every state reached from it; `Restored.teardown_clears`, `Restored.shell_inv`,
   `Restored.ctx_verified`, `Restored.port_closed_teardown` and
   `Restored.second_hello_teardown` are the headline safety theorems for them;
-* `Quota.restore`, `Quota.step`: the NAP-STORAGE per-scope quota holds after restore and
-  every step;
+* `Quota.restore`, `Quota.step`: the NAP-STORAGE per-scope quota holds after restoring a
+  record within the quota (`Persisted.withinQuota`, checked on load) and after every step;
 * `Reachable'.restore_abs`: `step'` from a restored finite state refines `Runtime.step`.
 -/
 
@@ -53,7 +57,8 @@ open _root_.Napplet.Runtime NapStorage Refine
 
 /-! ## The durable record -/
 
-structure Persisted where
+/-- The durable fields as plain data. -/
+structure PersistedData where
   storage : List (Scope × KV)
   /-- Registered schema per scope: the raw schema JSON and its version. -/
   schemas : List (Scope × Json × Option Nat)
@@ -65,91 +70,49 @@ structure Persisted where
   cvmAllowances : List Run.Cvm.Allowance
   deriving DecidableEq, Repr
 
-def Persisted.empty : Persisted := ⟨[], [], [], [], [], [], [], []⟩
+/-- A schema entry registers to its stored version. -/
+def regOk (e : Scope × Json × Option Nat) : Bool :=
+  match Run.Config.register e.2.1 e.2.2 none with
+  | .ok r => r.version == e.2.2
+  | .error _ => false
 
-/-- Read the durable fields of a finite state. -/
-def persist (s : RtState') : Persisted where
-  storage := s.storage.store.entries
-  schemas := s.config.schemas.entries.filterMap fun e => e.2.map fun r => (e.1, r.raw, r.version)
-  values := s.config.values.entries.filterMap fun e => e.2.map (e.1, ·)
-  intentDefaults := s.intent.defaults
-  linkRules := s.link.rules
-  uploadConsent := s.upload.consented
-  valueAllowances := s.value.allowances
-  cvmAllowances := s.cvm.allowances
+/-- Canonical: distinct keys per field, no empty store entry, every schema registers to its
+stored version. -/
+def PersistedData.canon (d : PersistedData) : Bool :=
+  decide (d.storage.map Prod.fst).Nodup && d.storage.all (fun e => !e.2.isEmpty) &&
+  decide (d.schemas.map Prod.fst).Nodup && d.schemas.all regOk &&
+  decide (d.values.map Prod.fst).Nodup
 
-/-- The registered schemas a record restores to (entries that do not register are
-dropped; `Persisted.WF` rules them out). -/
-def regEntries (p : Persisted) : List (Scope × Option Run.Config.Reg) :=
-  p.schemas.filterMap fun e =>
-    match Run.Config.register e.2.1 e.2.2 none with
-    | .ok r => some (e.1, some r)
-    | .error _ => none
+/-- The durable record: canonical data. A record a host loads is checked by its decoder
+(`decPersisted`), so every `Persisted` value is one `persist` can produce. -/
+structure Persisted extends PersistedData where
+  canon : toPersistedData.canon = true
 
-/-- A fresh session with the durable fields of `p`. -/
-def restore (cfg : Config) (names : FMap WindowId (Option String)) (p : Persisted) : RtState' :=
-  let i := init' cfg names
-  { i with
-    storage := { i.storage with store := ⟨[], p.storage⟩ }
-    config := { i.config with schemas := ⟨none, regEntries p⟩,
-                              values := ⟨none, p.values.map fun e => (e.1, some e.2)⟩ }
-    intent := { i.intent with defaults := p.intentDefaults }
-    link := { i.link with rules := p.linkRules }
-    upload := { i.upload with consented := p.uploadConsent }
-    value := { i.value with allowances := p.valueAllowances }
-    cvm := { i.cvm with allowances := p.cvmAllowances } }
+def Persisted.ofData? (d : PersistedData) : Option Persisted :=
+  if h : d.canon = true then some ⟨d, h⟩ else none
 
-/-- The same restore on the model's state. -/
-def _root_.Napplet.Runtime.RtState.restore (cfg : Config) (p : Persisted) : RtState :=
-  let i := RtState.init cfg
-  { i with
-    storage := { i.storage with store := FMap.get ⟨[], p.storage⟩ }
-    config := { i.config with schemas := FMap.get ⟨none, regEntries p⟩,
-                              values := FMap.get ⟨none, p.values.map fun e => (e.1, some e.2)⟩ }
-    intent := { i.intent with defaults := p.intentDefaults }
-    link := { i.link with rules := p.linkRules }
-    upload := { i.upload with consented := p.uploadConsent }
-    value := { i.value with allowances := p.valueAllowances }
-    cvm := { i.cvm with allowances := p.cvmAllowances } }
+def Persisted.empty : Persisted := ⟨⟨[], [], [], [], [], [], [], []⟩, by decide⟩
 
-theorem abs_restore (cfg : Config) (names : FMap WindowId (Option String))
-    (hn : names.get = cfg.endpointName) (p : Persisted) :
-    abs (restore cfg names p) = RtState.restore cfg p := by
-  simp only [restore, RtState.restore, ← abs_init' cfg names hn]
-  rfl
+theorem Persisted.ext {p q : Persisted} (h : p.toPersistedData = q.toPersistedData) : p = q := by
+  cases p; cases q; cases h; rfl
 
-/-! ## Well-formed records -/
+theorem Persisted.ofData?_self (p : Persisted) : Persisted.ofData? p.toPersistedData = some p := by
+  simp [Persisted.ofData?, p.canon]
 
-/-- A record the host may restore: distinct keys, no empty store entries, every store
-entry within the configured quota, and every schema registers to its stored version. -/
-structure Persisted.WF (cfg : Config) (p : Persisted) : Prop where
-  storage_nodup : (p.storage.map Prod.fst).Nodup
-  storage_ne : ∀ e ∈ p.storage, e.2 ≠ []
-  storage_quota : ∀ e ∈ p.storage, usage e.2 ≤ cfg.storageQuota
-  schemas_nodup : (p.schemas.map Prod.fst).Nodup
-  schemas_reg : ∀ e ∈ p.schemas, ∃ r, Run.Config.register e.2.1 e.2.2 none = .ok r ∧ r.version = e.2.2
-  values_nodup : (p.values.map Prod.fst).Nodup
+section canon
+variable (p : Persisted)
 
-/-- `WF` as a check the host runs on a record it loads. -/
-def Persisted.check (cfg : Config) (p : Persisted) : Bool :=
-  decide (p.storage.map Prod.fst).Nodup && p.storage.all (fun e => !e.2.isEmpty) &&
-  p.storage.all (fun e => decide (usage e.2 ≤ cfg.storageQuota)) &&
-  decide (p.schemas.map Prod.fst).Nodup &&
-  p.schemas.all (fun e => match Run.Config.register e.2.1 e.2.2 none with
-    | .ok r => decide (r.version = e.2.2) | .error _ => false) &&
-  decide (p.values.map Prod.fst).Nodup
-
-theorem Persisted.check_wf {cfg : Config} {p : Persisted} (h : p.check cfg = true) : p.WF cfg := by
-  simp only [Persisted.check, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,
+theorem Persisted.facts :
+    (p.storage.map Prod.fst).Nodup ∧ (∀ e ∈ p.storage, e.2 ≠ []) ∧
+    (p.schemas.map Prod.fst).Nodup ∧ (∀ e ∈ p.schemas, regOk e = true) ∧
+    (p.values.map Prod.fst).Nodup := by
+  have h := p.canon
+  simp only [PersistedData.canon, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,
     Bool.not_eq_true', List.isEmpty_eq_false_iff] at h
-  obtain ⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩ := h
-  refine ⟨h1, fun e he => ?_, h3, h4, fun e he => ?_, h6⟩
-  · have := h2 e he
-    intro hn; rw [hn] at this; simp at this
-  · have := h5 e he
-    split at this
-    · rename_i r hr; exact ⟨r, hr, by simpa using this⟩
-    · cases this
+  obtain ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩ := h
+  exact ⟨h1, fun e he hn => by have := h2 e he; rw [hn] at this; simp at this, h3, h4, h5⟩
+
+end canon
 
 theorem register_raw {j : Json} {v : Option Nat} {prior : Option Run.Config.Reg} {r : Run.Config.Reg}
     (h : Run.Config.register j v prior = .ok r) : r.raw = j := by
@@ -175,29 +138,173 @@ theorem register_raw {j : Json} {v : Option Nat} {prior : Option Run.Config.Reg}
             first | (cases h; rfl) | (cases h) | (simp at h)
         | _ => cases h
 
-theorem schemas_restore (p : Persisted) (hw : ∀ e ∈ p.schemas, ∃ r,
-    Run.Config.register e.2.1 e.2.2 none = .ok r ∧ r.version = e.2.2) :
-    (regEntries p).filterMap (fun e => e.2.map fun r => (e.1, r.raw, r.version)) = p.schemas := by
-  obtain ⟨st, sc, va, id, li, up, vl, cv⟩ := p
-  simp only [regEntries]
-  induction sc with
-  | nil => rfl
-  | cons e rest ih =>
-    obtain ⟨r, hr, hv⟩ := hw e (by simp)
-    simp only [List.filterMap_cons, hr, Option.map_some, register_raw hr, hv]
-    rw [ih (fun e' he' => hw e' (List.mem_cons_of_mem _ he'))]
+theorem regOk_spec {e : Scope × Json × Option Nat} (h : regOk e = true) :
+    ∃ r, Run.Config.register e.2.1 e.2.2 none = .ok r ∧ r.raw = e.2.1 ∧ r.version = e.2.2 := by
+  unfold regOk at h
+  split at h
+  · rename_i r hr; exact ⟨r, hr, register_raw hr, by simpa using h⟩
+  · cases h
 
-theorem values_restore (l : List (Scope × Json)) :
-    (l.map fun e => (e.1, some e.2)).filterMap (fun e => e.2.map (e.1, ·)) = l := by
+/-- Read the durable fields of the model's state. `keys`, `schemaKeys` and `valueKeys`
+list the scopes the components wrote, so the record is computable. -/
+def _root_.Napplet.Runtime.RtState.persist (s : RtState) : Persisted where
+  storage := (dedup s.storage.keys).filterMap fun k =>
+    if (s.storage.store k).isEmpty then none else some (k, s.storage.store k)
+  schemas := (dedup s.config.schemaKeys).filterMap fun k =>
+    match s.config.schemas k with
+    | some r => if regOk (k, r.raw, r.version) then some (k, r.raw, r.version) else none
+    | none => none
+  values := (dedup s.config.valueKeys).filterMap fun k => (s.config.values k).map (k, ·)
+  intentDefaults := s.intent.defaults
+  linkRules := s.link.rules
+  uploadConsent := s.upload.consented
+  valueAllowances := s.value.allowances
+  cvmAllowances := s.cvm.allowances
+  canon := by
+    simp only [PersistedData.canon, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true]
+    refine ⟨⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩, ?_⟩
+    · refine List.Nodup.sublist (fst_filterMap_sub (fun k e h => ?_) _) (nodup_dedup _)
+      split at h
+      · cases h
+      · cases h; rfl
+    · intro e he
+      simp only [List.mem_filterMap] at he
+      obtain ⟨k, -, he⟩ := he
+      split at he
+      · cases he
+      · rename_i hne; cases he; simpa using hne
+    · refine List.Nodup.sublist (fst_filterMap_sub (fun k e h => ?_) _) (nodup_dedup _)
+      split at h
+      · split at h
+        · cases h; rfl
+        · cases h
+      · cases h
+    · intro e he
+      simp only [List.mem_filterMap] at he
+      obtain ⟨k, -, he⟩ := he
+      split at he
+      · split at he
+        · rename_i hok; cases he; exact hok
+        · cases he
+      · cases he
+    · refine List.Nodup.sublist (fst_filterMap_sub (fun k e h => ?_) _) (nodup_dedup _)
+      cases hv : s.config.values k with
+      | none => rw [hv] at h; cases h
+      | some v => rw [hv] at h; cases h; rfl
+
+/-- The registered schemas a record restores to. -/
+def regEntries (p : Persisted) : List (Scope × Option Run.Config.Reg) :=
+  p.schemas.filterMap fun e =>
+    match Run.Config.register e.2.1 e.2.2 none with
+    | .ok r => some (e.1, some r)
+    | .error _ => none
+
+/-- A fresh session with the durable fields of `p`, on the model's state. -/
+def _root_.Napplet.Runtime.RtState.restore (cfg : Config) (p : Persisted) : RtState :=
+  let i := RtState.init cfg
+  { i with
+    storage := { i.storage with store := FMap.get ⟨[], p.storage⟩, keys := p.storage.map Prod.fst }
+    config := { i.config with schemas := FMap.get ⟨none, regEntries p⟩,
+                              values := FMap.get ⟨none, p.values.map fun e => (e.1, some e.2)⟩,
+                              schemaKeys := p.schemas.map Prod.fst,
+                              valueKeys := p.values.map Prod.fst }
+    intent := { i.intent with defaults := p.intentDefaults }
+    link := { i.link with rules := p.linkRules }
+    upload := { i.upload with consented := p.uploadConsent }
+    value := { i.value with allowances := p.valueAllowances }
+    cvm := { i.cvm with allowances := p.cvmAllowances } }
+
+/-- The same restore on the finite representation. -/
+def restore (cfg : Config) (names : FMap WindowId (Option String)) (p : Persisted) : RtState' :=
+  let i := init' cfg names
+  { i with
+    storage := { i.storage with store := ⟨[], p.storage⟩, keys := p.storage.map Prod.fst }
+    config := { i.config with schemas := ⟨none, regEntries p⟩,
+                              values := ⟨none, p.values.map fun e => (e.1, some e.2)⟩,
+                              schemaKeys := p.schemas.map Prod.fst,
+                              valueKeys := p.values.map Prod.fst }
+    intent := { i.intent with defaults := p.intentDefaults }
+    link := { i.link with rules := p.linkRules }
+    upload := { i.upload with consented := p.uploadConsent }
+    value := { i.value with allowances := p.valueAllowances }
+    cvm := { i.cvm with allowances := p.cvmAllowances } }
+
+theorem abs_restore (cfg : Config) (names : FMap WindowId (Option String))
+    (hn : names.get = cfg.endpointName) (p : Persisted) :
+    abs (restore cfg names p) = RtState.restore cfg p := by
+  simp only [restore, RtState.restore, ← abs_init' cfg names hn]
+  rfl
+
+/-- Persisting the finite representation: `persist` of its abstraction. -/
+def persist (s : RtState') : Persisted := (abs s).persist
+
+theorem regEntries_mem {p : Persisted} {e : Scope × Json × Option Nat} (he : e ∈ p.schemas)
+    {r : Run.Config.Reg} (hr : Run.Config.register e.2.1 e.2.2 none = .ok r) :
+    (e.1, some r) ∈ regEntries p := by
+  simp only [regEntries, List.mem_filterMap]
+  exact ⟨e, he, by simp [hr]⟩
+
+theorem regEntries_sublist (l : List (Scope × Json × Option Nat)) :
+    ((l.filterMap fun e => match Run.Config.register e.2.1 e.2.2 none with
+      | .ok r => some (e.1, some r) | .error _ => none).map Prod.fst).Sublist (l.map Prod.fst) := by
   induction l with
-  | nil => rfl
-  | cons e l ih => simp only [List.map_cons, List.filterMap_cons, Option.map_some, ih]
+  | nil => exact List.Sublist.slnil
+  | cons e l ih =>
+    cases hr : Run.Config.register e.2.1 e.2.2 none with
+    | ok r => simp only [List.filterMap_cons, hr, List.map_cons]; exact ih.cons_cons _
+    | error er => simp only [List.filterMap_cons, hr, List.map_cons]; exact ih.cons _
 
-/-- Restoring then persisting gives the record back. -/
-theorem persist_restore (cfg : Config) (names : FMap WindowId (Option String)) (p : Persisted)
-    (hw : p.WF cfg) : persist (restore cfg names p) = p := by
-  simp only [persist, restore]
-  rw [schemas_restore p hw.schemas_reg, values_restore]
+theorem regEntries_nodup (p : Persisted) : ((regEntries p).map Prod.fst).Nodup :=
+  List.Nodup.sublist (regEntries_sublist p.schemas) p.facts.2.2.1
+
+/-- **Restoring then persisting gives the record back.** -/
+theorem persist_restore (cfg : Config) (p : Persisted) : (RtState.restore cfg p).persist = p := by
+  obtain ⟨hsn, hse, hcn, hcr, hvn⟩ := p.facts
+  apply Persisted.ext
+  have hS : (dedup (p.storage.map Prod.fst)).filterMap (fun k =>
+      if (FMap.get ⟨[], p.storage⟩ k).isEmpty then none else some (k, FMap.get ⟨[], p.storage⟩ k)) =
+      p.storage := by
+    rw [dedup_of_nodup hsn]
+    apply filterMap_fst_eq
+    intro e he
+    have hg : FMap.get ⟨[], p.storage⟩ e.1 = e.2 := FMap.get_of_mem (m := ⟨[], p.storage⟩) hsn he
+    have hne := hse e he
+    have hi : e.2.isEmpty = false := by
+      cases hv : e.2 with
+      | nil => exact absurd hv hne
+      | cons _ _ => rfl
+    rw [hg, hi]; rfl
+  have hC : (dedup (p.schemas.map Prod.fst)).filterMap (fun k =>
+      match FMap.get ⟨none, regEntries p⟩ k with
+      | some r => if regOk (k, r.raw, r.version) then some (k, r.raw, r.version) else none
+      | none => none) = p.schemas := by
+    rw [dedup_of_nodup hcn]
+    apply filterMap_fst_eq
+    intro e he
+    obtain ⟨r, hr, hraw, hv⟩ := regOk_spec (hcr e he)
+    have hg : FMap.get ⟨none, regEntries p⟩ e.1 = some r :=
+      FMap.get_of_mem (m := ⟨none, regEntries p⟩) (regEntries_nodup p) (regEntries_mem he hr)
+    rw [hg]
+    simp only [hraw, hv]
+    rw [show ((e.1, e.2.1, e.2.2) : Scope × Json × Option Nat) = e from rfl, hcr e he]
+    rfl
+  have hV : (dedup (p.values.map Prod.fst)).filterMap (fun k =>
+      (FMap.get ⟨none, p.values.map fun e => (e.1, some e.2)⟩ k).map (k, ·)) = p.values := by
+    rw [dedup_of_nodup hvn]
+    apply filterMap_fst_eq
+    intro e he
+    have hk : ((p.values.map fun e => (e.1, some e.2)).map Prod.fst).Nodup := by
+      rw [List.map_map]; exact hvn
+    have hg : FMap.get ⟨none, p.values.map fun e => (e.1, some e.2)⟩ e.1 = some e.2 :=
+      FMap.get_of_mem (m := ⟨none, _⟩) hk (List.mem_map.mpr ⟨e, he, rfl⟩)
+    rw [hg]; rfl
+  show PersistedData.mk _ _ _ _ _ _ _ _ = PersistedData.mk p.storage p.schemas p.values
+    p.intentDefaults p.linkRules p.uploadConsent p.valueAllowances p.cvmAllowances
+  congr 1
+
+theorem persist_restore' (cfg : Config) (names : FMap WindowId (Option String))
+    (hn : names.get = cfg.endpointName) (p : Persisted) : persist (restore cfg names p) = p := by
+  simp only [persist, abs_restore cfg names hn, persist_restore]
 
 /-! ## Restore revives nothing -/
 
@@ -316,12 +423,18 @@ def Quota (s : RtState) : Prop := ∀ sc, usage (s.storage.store sc) ≤ s.stora
 theorem Quota.init (cfg : Config) : Quota (RtState.init cfg) := by
   intro sc; simp [RtState.init, Run.Storage.St.init, usage]
 
-theorem Quota.restore {cfg : Config} {p : Persisted} (hw : p.WF cfg) : Quota (RtState.restore cfg p) := by
+/-- A record whose every store entry is within the configured quota (checked on load). -/
+def Persisted.withinQuota (cfg : Config) (p : Persisted) : Bool :=
+  p.storage.all fun e => decide (usage e.2 ≤ cfg.storageQuota)
+
+theorem Quota.restore {cfg : Config} {p : Persisted} (hw : p.withinQuota cfg = true) :
+    Quota (RtState.restore cfg p) := by
   intro sc
+  simp only [Persisted.withinQuota, List.all_eq_true, decide_eq_true_eq] at hw
   simp only [RtState.restore, RtState.init, Run.Storage.St.init, FMap.get]
   cases ha : alookup p.storage sc with
   | none => simp [usage]
-  | some kv => exact hw.storage_quota _ (alookup_mem ha)
+  | some kv => exact hw _ (alookup_mem ha)
 
 theorem napStep_storage_quota (h : Host) (w : World) (cx : Ctx) (s : RtState) (j : Json) (d : Domain)
     (hq : Quota s) : Quota (napStep h w cx s j d).1 := by
@@ -359,7 +472,7 @@ theorem Quota.step {h : Host} {cfg : Config} {s : RtState} (hq : Quota s) (i : I
     | tick n => exact hq
     | _ => simp [Input.event?] at hi
 
-theorem Restored.quota {h : Host} {cfg : Config} {p : Persisted} (hw : p.WF cfg) {s : RtState}
+theorem Restored.quota {h : Host} {cfg : Config} {p : Persisted} (hw : p.withinQuota cfg = true) {s : RtState}
     (hr : Restored h cfg p s) : Quota s := by
   induction hr with
   | restore => exact Quota.restore hw
@@ -373,26 +486,17 @@ theorem Reachable.quota {h : Host} {cfg : Config} {s : RtState} (hr : Runtime.Re
 
 /-! ## The finite representation after restore -/
 
-theorem regEntries_sublist (l : List (Scope × Json × Option Nat)) :
-    ((l.filterMap fun e => match Run.Config.register e.2.1 e.2.2 none with
-      | .ok r => some (e.1, some r) | .error _ => none).map Prod.fst).Sublist (l.map Prod.fst) := by
-  induction l with
-  | nil => exact List.Sublist.slnil
-  | cons e l ih =>
-    cases hr : Run.Config.register e.2.1 e.2.2 none with
-    | ok r => simp only [List.filterMap_cons, hr, List.map_cons]; exact ih.cons_cons _
-    | error er => simp only [List.filterMap_cons, hr, List.map_cons]; exact ih.cons _
-
-theorem WF.restore (cfg : Config) (names : FMap WindowId (Option String)) (p : Persisted)
-    (hw : p.WF cfg) : Refine.WF (restore cfg names p) := by
+theorem WF.restore (cfg : Config) (names : FMap WindowId (Option String)) (p : Persisted) :
+    Refine.WF (restore cfg names p) := by
   have hi := WF.init' cfg names
-  refine { hi with store_dflt := rfl, store_wf := ⟨hw.storage_nodup, ?_⟩, schemas_dflt := rfl, schemas_wf := ⟨?_, ?_⟩, values_dflt := rfl, values_wf := ⟨?_, ?_⟩ }
+  obtain ⟨hsn, hse, hcn, -, hvn⟩ := p.facts
+  refine { hi with store_dflt := rfl, store_wf := ⟨hsn, ?_⟩, schemas_dflt := rfl, schemas_wf := ⟨?_, ?_⟩, values_dflt := rfl, values_wf := ⟨?_, ?_⟩ }
   · intro e he
-    have := hw.storage_ne e he
+    have := hse e he
     cases hv : e.2 with
     | nil => exact absurd hv this
     | cons _ _ => simp [keepNe, hv]
-  · exact List.Nodup.sublist (regEntries_sublist p.schemas) hw.schemas_nodup
+  · exact regEntries_nodup p
   · intro e he
     change e ∈ regEntries p at he
     simp only [regEntries, List.mem_filterMap] at he
@@ -402,7 +506,7 @@ theorem WF.restore (cfg : Config) (names : FMap WindowId (Option String)) (p : P
     · cases he'
   · show ((p.values.map fun e => (e.1, some e.2)).map Prod.fst).Nodup
     rw [List.map_map]
-    exact hw.values_nodup
+    exact hvn
   · intro e he
     change e ∈ p.values.map (fun e => (e.1, some e.2)) at he
     simp only [List.mem_map] at he
@@ -419,10 +523,10 @@ inductive Reachable'' (h : Host) (cfg : Config) (names : FMap WindowId (Option S
 /-- `step'` from a restored finite state refines `Runtime.step` from `RtState.restore`, so
 every `Restored` theorem applies to it. -/
 theorem Reachable''.abs {h : Host} {cfg : Config} {names : FMap WindowId (Option String)}
-    {p : Persisted} (hn : names.get = cfg.endpointName) (hw : p.WF cfg) {s : RtState'}
+    {p : Persisted} (hn : names.get = cfg.endpointName) {s : RtState'}
     (hr : Reachable'' h cfg names p s) : Refine.WF s ∧ Restored h cfg p (Refine.abs s) := by
   induction hr with
-  | restore => exact ⟨WF.restore cfg names p hw, abs_restore cfg names hn p ▸ .restore⟩
+  | restore => exact ⟨WF.restore cfg names p, abs_restore cfg names hn p ▸ .restore⟩
   | step i _ ih =>
     refine ⟨ih.1.step' i, ?_⟩
     rw [abs_step' ih.1]
@@ -554,7 +658,7 @@ def encPersisted (p : Persisted) : Json :=
     ("valueAllowances", encList encVA p.valueAllowances),
     ("cvmAllowances", encList encCA p.cvmAllowances)]
 
-def decPersisted (j : Json) : Except String Persisted := do
+def decPersistedData (j : Json) : Except String PersistedData := do
   let st ← field j "storage" >>= decList (decPair decScope decKV)
   let sc ← field j "schemas" >>= decList decSchemaEntry
   let va ← field j "values" >>= decList (decPair decScope decJson)
@@ -565,8 +669,15 @@ def decPersisted (j : Json) : Except String Persisted := do
   let cv ← field j "cvmAllowances" >>= decList decCA
   pure ⟨st, sc, va, id, li, up, vl, cv⟩
 
-@[simp] theorem decPersisted_enc (p : Persisted) : decPersisted (encPersisted p) = .ok p := by
-  obtain ⟨st, sc, va, idf, li, up, vl, cv⟩ := p
+/-- Decode a record and check it is canonical (`PersistedData.canon`). -/
+def decPersisted (j : Json) : Except String Persisted := do
+  let d ← decPersistedData j
+  match Persisted.ofData? d with
+  | some p => pure p
+  | none => .error "the persisted record is not canonical"
+
+theorem decPersistedData_enc (p : Persisted) : decPersistedData (encPersisted p) = .ok p.toPersistedData := by
+  obtain ⟨⟨st, sc, va, idf, li, up, vl, cv⟩, _⟩ := p
   have h1 := decList_enc (d := decPair decScope decKV) (e := encPair encScope encKV) st
     (fun p _ => decPair_enc p (decScope_enc _) (decKV_enc _))
   have h2 := decList_enc (d := decSchemaEntry) (e := encSchemaEntry) sc (fun _ _ => decSchemaEntry_enc _)
@@ -578,7 +689,11 @@ def decPersisted (j : Json) : Except String Persisted := do
   have h6 := decList_enc (d := decKey) (e := encKey) up (fun _ _ => decKey_enc _)
   have h7 := decList_enc (d := decVA) (e := encVA) vl (fun _ _ => decVA_enc _)
   have h8 := decList_enc (d := decCA) (e := encCA) cv (fun _ _ => decCA_enc _)
-  simp [decPersisted, encPersisted, field, Json.get?, Json.lookup, h1, h2, h3, h4, h5, h6, h7, h8]
+  simp [decPersistedData, encPersisted, field, Json.get?, Json.lookup, h1, h2, h3, h4, h5, h6, h7, h8]
+
+/-- The JSON round trip. -/
+@[simp] theorem decPersisted_enc (p : Persisted) : decPersisted (encPersisted p) = .ok p := by
+  simp [decPersisted, decPersistedData_enc, Persisted.ofData?_self]
 
 end codec
 

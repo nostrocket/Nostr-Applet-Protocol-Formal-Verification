@@ -34,8 +34,14 @@ open NapStorage
 structure St where
   store : Store
   quota : Nat
+  /-- The scopes with stored values, in first-write order (what `Persist.persist` reads). -/
+  keys : List Scope := []
 
-def St.init (quota : Nat := defaultQuota) : St := { store := fun _ => [], quota }
+def St.init (quota : Nat := defaultQuota) : St := { store := fun _ => [], quota, keys := [] }
+
+/-- Keep `keys` listing exactly the scopes with stored values. -/
+def keyUpd (keys : List Scope) (sc : Scope) (kv : KV) : List Scope :=
+  if kv.isEmpty then keys.erase sc else if keys.contains sc then keys else keys ++ [sc]
 
 abbrev Req := StorageReq
 
@@ -100,7 +106,8 @@ def encodeResult (r : Req) (res : StorageResult) : Json :=
 
 def handle (_h : Host) (_w : World) (cx : Ctx) (s : St) (r : Req) : St × List Eff :=
   let (store', res) := NapStorage.handle s.quota s.store cx.storage r
-  ({ s with store := store' }, [.send cx.port (encodeResult r res)])
+  let sc := scopeFor cx.storage r.sel
+  ({ s with store := store', keys := keyUpd s.keys sc (store' sc) }, [.send cx.port (encodeResult r res)])
 
 def onReply (_h : Host) (_w : World) (s : St) (_n : Nat) (_r : Reply) : St × List Eff := (s, [])
 

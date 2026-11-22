@@ -584,8 +584,15 @@ structure St where
   values : Scope → Option Json
   /-- Endpoints with a live `config.subscribe`. -/
   subs : List PortId
+  /-- Scopes with a registered schema, in first-registration order. -/
+  schemaKeys : List Scope := []
+  /-- Scopes with persisted values, in first-write order. -/
+  valueKeys : List Scope := []
 
-def St.init : St := ⟨fun _ => none, fun _ => none, []⟩
+def St.init : St := ⟨fun _ => none, fun _ => none, [], [], []⟩
+
+def addKey (keys : List Scope) (sc : Scope) : List Scope :=
+  if keys.contains sc then keys else keys ++ [sc]
 
 /-- NAP-CONFIG §Identity Scope: publisher/kind/`d` (or event id) plus artifact hash. -/
 def scopeOf (c : Ctx) : Scope := scopeFor c.storage .shared
@@ -630,7 +637,8 @@ def handle (_h : Host) (w : World) (cx : Ctx) (s : St) : Req → St × List Eff
       (s, [.send cx.port (resultErr id c m), .send cx.port (schemaErrorMsg c m)])
     | .ok reg =>
       let s' := { s with schemas := upd s.schemas sc (some reg),
-                         values := upd s.values sc ((s.values sc).map (pruneRoot reg.props)) }
+                         values := upd s.values sc ((s.values sc).map (pruneRoot reg.props)),
+                         schemaKeys := addKey s.schemaKeys sc }
       (s', .send cx.port (resultOk id) :: push w s' sc)
   | .get id => (s, [.send cx.port (deliver (s.schemas (scopeOf cx)) (s.values (scopeOf cx)) (some id))])
   | .subscribe =>
@@ -663,7 +671,7 @@ def edited (w : World) (s : St) (args : Json) : St × List Eff :=
         match snapshot reg (some p) with
         | none => (s, [])
         | some _ =>
-          let s' := { s with values := upd s.values sc (some p) }
+          let s' := { s with values := upd s.values sc (some p), valueKeys := addKey s.valueKeys sc }
           (s', push w s' sc)
   | _, _ => (s, [])
 
