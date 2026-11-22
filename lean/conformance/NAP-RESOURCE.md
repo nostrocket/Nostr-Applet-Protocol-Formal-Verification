@@ -8,7 +8,7 @@ Lean: `Napplet/Run/Resource.lean` (component), `Napplet/Nap/Resource.lean` (pure
 |---|---|---|---|---|
 | 1 | "This domain MUST NOT grant raw network access" | MUST | OK | The only network operation is `Call.fetch` of a policy-checked napplet URL (`launch` `Run/Resource.lean:672`); `data:` never reaches the host (`initSlot` `:709-712`) |
 | 2 | "... or expose upstream `Content-Type`" | MUST | OK | `FetchOutcome.upstreamType` is never read (`Nap/Resource.lean:101-102`); theorem `bytes_mime_sniffed_not_svg` (`Nap/Resource.lean:271`) |
-| 3 | "A projection MUST enforce direct-network denial before exposing this domain" | MUST | HOST | `Host.lean:57-58` (`sandbox="allow-scripts"`, NIP-5D CSP `meta` first in `head`) |
+| 3 | "A projection MUST enforce direct-network denial before exposing this domain" | MUST | HOST | `Host.lean:57-58` (`sandbox="allow-scripts"`, NIP-5D CSP `meta` first in `head`); `Srcdoc.baselineCsp` (`connect-src 'none'`), first in `head` (`Srcdoc.csp_first`) |
 | 4 | `info()`: "Napplets MAY call it ... but MUST NOT be required to call it before `bytes` or `bytesMany`" | MUST | OK | No preflight state: `handle` `:723-733` |
 | 5 | "Late terminal envelopes for cancelled IDs MUST be dropped" | MUST | OK | `handle .cancel` `:734-737`, `onReply` `:746`; theorem `cancel_drops_late` (`:1009`) |
 | 6 | "Each URL MUST be processed as if it were an independent `bytes(url)` request" | MUST | OK | Per-slot `initSlot` `:704`, `itemOf` `:523`; theorems `jobItems_ok` (`:885`), `bytesMany_items` (`Nap/Resource.lean:305`). The quota is shared per envelope (row 54) |

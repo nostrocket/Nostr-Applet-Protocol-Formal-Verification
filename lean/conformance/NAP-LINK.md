@@ -26,7 +26,7 @@ Lean: `Napplet/Run/Link.lean` (component), `Napplet/Nap/Link.lean` (pure model),
 | 18 | "The shell SHOULD open web links in a context outside the napplet sandbox" | SHOULD | HOST | `Host.lean:471` ("outside the napplet sandbox") |
 | 19 | "The shell SHOULD use `noopener` or an equivalent opener-isolation mechanism" | SHOULD | HOST | `Host.lean:472-475` |
 | 20 | "The shell MAY prompt the user before opening a link" | MAY | OK | `Run/Link.lean:219-224` (`Call.prompt .link "open"`), `Cfg.prompt` `:91` |
-| 21 | "The shell MAY persist user choices per napplet, per hostname, or per URL" | MAY | OK | `Run/Link.lean:68` `Target`, `:227` `ruleOf`; rules keyed by manifest key (README LINK paragraph) |
+| 21 | "The shell MAY persist user choices per napplet, per hostname, or per URL" | MAY | OK | `Run/Link.lean:68` `Target`, `:227` `ruleOf`; rules keyed by manifest key (README LINK paragraph); durable as `Persist.Persisted.linkRules` |
 | 22 | "The shell MAY support non-web schemes such as `nostr:` or `mailto:` by policy" | MAY | OK | `Cfg.allowedSchemes` `Run/Link.lean:87`; `hostOf` none is fine for non-http schemes (`:143`) |
 | 23 | Prompt choices MAY include allow once / allow napplet / allow hostname / deny once / deny napplet | MAY | OK | `Run/Link.lean:227` `ruleOf` (`"once"`, `"napplet"`, `"host"` allow-only, `"url"`); `Host.lean:461-470` |
 | 24 | "Shells SHOULD require a user gesture or prompt unless policy already allows the request" | SHOULD | OK | `Run/Link.lean:166` `verdict` (`allow` only under an allow rule, else prompt or `blocked-by-policy`); theorems `handle_opened_requires_rule` `:423`, `onReply_opened_requires_user` `:435` |

@@ -3,15 +3,16 @@
 A machine-checked, executable model of a napplet shell: the NIP-5D core, all
 nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
 together, the host interface, and the napplet-side bootstrap and binding.
-904 theorems and 797 evaluated vectors (124 of them end to end through the
-composed runtime). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
+1092 theorems and 846 evaluated vectors (124 of them end to end through the
+composed runtime, all of which also run byte for byte through the `napplet-oracle`
+executable as 43 traces). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
 but the model was built from the upstream texts at the commits listed below.
 
 - Lean `v4.36.0`, no Mathlib, no dependencies.
 - No `sorry`. Proofs use only Lean's standard axioms (`propext`, `Classical.choice`,
   `Quot.sound`). No `native_decide`.
 - Every definition is computable, so the model runs as a test oracle
-  (`Napplet/Test/Harness.lean`).
+  (`Napplet/Test/Harness.lean`) and as an executable, `napplet-oracle`.
 - Coverage against upstream: every one of the 181 type strings in the 19 NAP wire
   tables is decoded or produced by its component; all 93 JSON request examples in the
   NAP specs decode (`Napplet/Test/UpstreamExamples.lean`); `Napplet/Test/E2E.lean`
@@ -34,9 +35,13 @@ cd lean && lake build
 cd lean && lake env lean Audit.lean
 ```
 
-`lake build` checks every proof and runs every vector. `Audit.lean` prints the axioms
-behind the headline theorems; CI fails if anything other than the three standard
-axioms appears, and fails on any `sorry`.
+`lake build` checks every proof, runs every vector and builds `napplet-oracle` and
+`napplet-tracegen`. `Audit.lean` prints the axioms behind the headline theorems; CI
+fails if anything other than the three standard axioms appears, and fails on any
+`sorry`. CI also regenerates the traces (`napplet-tracegen traces`, which must leave
+`traces/` unchanged), replays every trace through `napplet-oracle` and compares the
+output byte for byte (`scripts/check_traces.sh`), and checks `BindingApi.methods`
+against the documented API tables (`scripts/binding_api_table.py --check`).
 
 ## Implementing from this model
 
@@ -44,7 +49,7 @@ A shell implementation is a faithful port of four things.
 
 | What | Where | Notes |
 |---|---|---|
-| Entry point | `Napplet.Runtime.step` in [`Napplet/Runtime.lean`](Napplet/Runtime.lean) | `step : Host → Config → RtState → Input → RtState × List Output`. Start from `RtState.init cfg`. Inputs: browser events (`create`, `load`, `hello`, `windowMsg`, `portClosed`), `grant`, `message p json` (a JSON value posted on port `p`), `reply tag r`, `event e`, `tick now`. Outputs: `send p json`, browser actions (`iframeCreated`, `bound`, `closePort`, `removeFrame`, `rejected`), host `call tag c` and `effect e`. Generated from the component table by `scripts/gen_runtime.py`. |
+| Entry point | `Napplet.Runtime.step` in [`Napplet/Runtime.lean`](Napplet/Runtime.lean) | `step : Host → Config → RtState → Input → RtState × List Output`. Start from `RtState.init cfg`, or from `RtState.restore cfg p` after a reload. A port stores `Refine.RtState'` and runs `Refine.step'` (below). Inputs: browser events (`create`, `load`, `hello`, `windowMsg`, `portClosed`), `grant`, `message p json` (a JSON value posted on port `p`), `reply tag r`, `event e`, `tick now`. Outputs: `send p json`, browser actions (`iframeCreated`, `bound`, `closePort`, `removeFrame`, `rejected`), host `call tag c` and `effect e`. Generated from the component table by `scripts/gen_runtime.py`. |
 | Host interface | [`Napplet/Host.lean`](Napplet/Host.lean) | Everything the host supplies, each with its contract: pure functions (`Host`: SHA-256, signature checks, MIME sniffing, SVG rasterisation, ciphertext detection), asynchronous calls and replies (signing, encryption, decryption, fetch, prompts, relay pool, NIP-65, NAP-specific operations), effects, events, the clock, persistence, and the list of external standards. |
 | Shell configuration | `Runtime.Config` and each component's `Cfg` | Policy that is not a host call (exposure policy, quotas, rails, allowlists, limits). Defaults follow the upstream recommendations. |
 | Per-NAP behaviour | `Napplet/Run/<Name>.lean` | One component per NAP: `decode` (wire JSON → typed request, with upstream type strings, fields, errors), `encodeReq` (proved inverse of `decode`), `handle`, `onReply`, `onEvent`, `drop` (teardown), and the encoders for every result and push. Each file starts with its upstream wire summary and ends with vectors built from the upstream examples. |
@@ -56,6 +61,64 @@ plus the publisher, kind and event id. Every NAP gets its endpoint context from 
 binding through one function, `Ctx.ofBinding` (`Napplet/Component.lean`), which gives
 the manifest key (`Identity.key`) used by the STORAGE, RESOURCE and CONFIG scopes, the
 INTENT catalog id (`Identity.catalogId`, kehto's encoding) and the INC endpoint id.
+
+### State a port stores: `RtState'` (`Napplet/Refine.lean`)
+
+`RtState` uses functions for its maps, which a shell cannot store. Copy `RtState'`
+instead: the same fields, with every map finite. Frames, bindings, grants, instance
+ids, endpoint names, NAP-STORAGE's store, NAP-CONFIG's schemas and values and the
+NAP-DISPLAY framebuffer are `FMap`s (association lists with a default, keys distinct,
+no entry holding the default), and removed windows are canonical intervals (`Ivs`).
+`step'` runs one input; `abs_step'` and `step'_outputs` prove it is `Runtime.step` on
+the abstraction, so every theorem in this README holds of it. The memory theorems
+(`live_keys`, `bindings_keys`, `grants_keys`, `inst_keys`, `ports_bound`,
+`components_bound`, `removed_length_le`) say every per-window or per-port entry is a live
+window or a bound port, and that removed windows cost at most one interval more than
+there are live windows when the host numbers windows consecutively. The components'
+`Cfg` policy functions are configuration, not state; the oracle builds them from a
+finite JSON form.
+
+### Persistence (`Napplet/Persist.lean`)
+
+`Persisted` is everything durable: NAP-STORAGE values, NAP-CONFIG schemas (raw JSON and
+version) and values, NAP-INTENT defaults, NAP-LINK rules, NAP-UPLOAD consent, and
+NAP-VALUE and NAP-CVM allowance balances, each as an association list keyed by scope,
+manifest key, archetype or catalog id. After every step that changes `persist s`, the
+host stores it (`encPersisted`); on start-up it decodes the record, runs
+`Persisted.check`, and starts from `restore cfg names p` (`RtState.restore cfg p` in the
+model) instead of `init`. `persist_restore` gives the record back; `restore_clean` says
+nothing per session survives; `Restored.*` restate the headline safety theorems for
+every state reached from a restored one; `Quota.restore` keeps the storage quota.
+
+### The oracle (`napplet-oracle`, `Napplet/Oracle.lean`)
+
+```bash
+cd lean && lake build && .lake/build/bin/napplet-oracle < traces/storage.in.ndjson
+```
+
+Input is newline-delimited JSON: a header
+`{"config": {...}, "host": {...}, "restore"?: <Persisted>, "emitPersisted"?: true}`,
+then one `Runtime.Input` per line (`Codec.encInput`, for example
+`{"t":"message","port":7,"msg":{"type":"storage.get","id":"a1","key":"theme"}}`). Each
+input gives one output line `{"step": n, "outputs": [...]}` (`Codec.encOutput`), plus
+`"persisted"` when asked. The oracle runs `step'`, computes SHA-256 in Lean
+(`Napplet/Sha256.lean`, checked against FIPS 180-4 vectors), and takes signature results
+from the trace (`host.verifySig`, `host.verifyEvent`: valid unless listed as invalid).
+Every policy function of `Config` has a finite JSON form, documented in
+`Napplet/Oracle.lean`. A port can run its own shell on the same trace and compare the
+lines; `traces/*.in.ndjson` and `traces/*.out.ndjson` are the E2E vectors in this form.
+
+### The `srcdoc` and the bootstrap (`Napplet/Srcdoc.lean`, `Napplet/Bootstrap.lean`)
+
+`Bootstrap.srcdoc bytes exposed` is the iframe's `srcdoc`: `Srcdoc.buildSrcdoc` puts the
+NAPPLETS-SPEC §16.1 baseline CSP (`Srcdoc.baselineCsp`) as the first element of `head`
+and the bootstrap script (`Bootstrap.bootstrapJs exposed`) right after it. It follows the
+HTML tokenizer to the insertion point (BOM, doctype, comments with their early endings,
+declarations and bogus comments, quoted attribute values, case folding, unterminated
+constructs) and adds `<head>` when the napplet has none. `csp_first` proves that nothing
+from the napplet precedes the CSP in parse order; `buildSrcdoc_bytes` that the verified
+bytes are kept. The bootstrap script is checked against `BindingApi.methods` (the API
+tables as data) and `Binding.lean` (correlation, buffering, one hello).
 
 ### What an implementer still needs from outside the model
 
@@ -183,6 +246,21 @@ The amendments: `Run.Shell.check_one_reply` (one result, no call or effect),
 `launch_absent_rejected`, `launch_queue` (no delivery), `acceptLaunch_anonymous`,
 `replay_effects` (one delivery to the selected endpoint as itself, or failure),
 `replay_ignores_defaults`; `Run.Identity.profile_present`.
+
+### The finite representation, persistence, codecs and `srcdoc`
+
+- `Refine.abs_step'`, `step'_outputs`, `WF.step'`, `Reachable'.abs`: the finite state
+  refines the composed machine and stays canonical; `Runtime.step_frame` is the frame
+  condition behind it. Memory: `live_keys`, `bindings_keys`, `grants_keys`, `inst_keys`,
+  `ports_bound`, `components_bound`, `removed_length_le` (with `Ivs.length_le`).
+- `Persist.persist_restore`, `decPersisted_enc`, `restore_clean`, `Inv.restore`,
+  `Restored.inv` and the `Restored.*` headline theorems, `Restored.quota`,
+  `Reachable.quota`, `Reachable''.abs`, `Persisted.check_wf`.
+- `Codec.dec…_enc…`: every type crossing the runtime boundary (`Input`, `Output`, `Call`,
+  `Reply`, `Effect`, `HostEvent`, `ManifestEvent`, `NostrEvent`, `UnsignedEvent`,
+  `FetchOutcome`, `Identity`, `ManifestError`, `CallTag`) decodes from its encoding.
+- `Srcdoc.csp_first`, `buildSrcdoc_bytes`, `step_app` (a complete token does not look
+  past its last byte).
 
 ### Napplet side
 
@@ -554,8 +632,70 @@ the model.
     states this for `profile`; the model applies it to every query, as the component
     documentation already said.
 
+### Decisions added with persistence, the oracle, the finite representation and `srcdoc`
+
+53. **The runtime forgets torn-down ports and instance ids.** `RtState.ports` lists only
+    bound ports, and a frame that is removed or refused resets its instance id to 0. Nothing
+    reads either for an unbound port, so behaviour is unchanged; without this the state
+    would grow with session history.
+
+54. **What persists.** Exactly `Persist.Persisted`: storage values, CONFIG schemas and
+    values, intent defaults, LINK rules, UPLOAD consent and VALUE and CVM allowance
+    balances. Allowance balances persist because an allowance reset by a reload could be
+    spent twice. Restored LINK rules and allowances replace the configured ones (the
+    configured ones were the record's starting point). Intent defaults persist even though
+    the host also re-sends them. Identifier counters do not: identifiers are unique per
+    runtime session.
+
+55. **CONFIG schemas persist as text.** A schema is stored as its raw JSON and version and
+    registered again on restore; `Persisted.check` rejects a record whose schema does not
+    register to its stored version.
+
+56. **Persisting goes through `RtState'`.** The model's store is a function and cannot be
+    enumerated, so `persist` reads the finite representation; `RtState.restore` is the same
+    restore on the model's state (`abs_restore`).
+
+57. **Removed windows are intervals.** The memory bound in windows assumes the host numbers
+    windows consecutively; with any other numbering the cost is the number of gaps.
+
+58. **Oracle host stand-ins.** SHA-256 is computed; signatures come from the trace (valid
+    unless listed); MIME sniffing recognises PNG, JPEG, GIF, WebP and PDF; there is no SVG
+    rasteriser; metadata stripping is the identity. `"hash": "test"` and `"sniff": "test"`
+    reproduce the test harness, to replay the model's own vectors.
+
+59. **Finite policy forms.** Each policy function of `Config` is a list of rules with a
+    default (`Napplet/Oracle.lean`); the first matching rule wins and `"*"` matches
+    anything. NOTIFY's sanitiser is the identity.
+
+60. **Codec formats.** Records are objects; constructors carry a `"t"` tag; optional members
+    are omitted when absent; bytes are base64. Round trips are proved on JSON values; the
+    text round trip through `Json.render` and `Json.parse` is checked by the traces.
+
+61. **The insertion point.** After complete whitespace, comments, declarations, bogus
+    comments, `</>` and `<html>` start tags, and after a `<head>` start tag if that comes
+    next; otherwise the shell inserts `<head>` there. Any other token (text, another start
+    or end tag) or an unterminated construct ends the scan, and the injection goes before
+    it. A leading BOM is dropped.
+
+62. **CSP attribute value.** The policy is written in a double-quoted `content` attribute
+    with `"` and `&` escaped, so any policy string stays inside the attribute.
+
+63. **Bootstrap surface.** Request methods take the envelope members as one object rather
+    than positional parameters; methods on handles (`ChannelHandle.*`,
+    `Subscription.close`) and rows the tables mark local, helper or sugar are not installed
+    on the namespace.
+
+64. **Script data.** The tokenizer does not model the script data states. Instead the
+    bootstrap text is checked to contain no `</script` and no `<!--` (`Srcdoc.scriptSafe`),
+    so its element ends at the injected `</script>`.
+
 ## Not modelled yet
 
+- Bounds on some per-session component records. NAP-MEDIA keeps the ids of ended
+  sessions (`MediaState.retired`), NAP-VALUE keeps transfer records after teardown for
+  `value.status`, and NAP-INTENT keeps deliveries that no live target accepts yet. These
+  grow with the session; the memory theorems cover the shell's maps, instance ids, ports
+  and per-endpoint component state, not these lists.
 - The deferred CLASS and CONNECT tracks.
 - Behaviour upstream leaves undefined, each shown by the upstream text:
   - NAP-MEDIA §Shell Behavior: `source` is required "unless the shell defines a

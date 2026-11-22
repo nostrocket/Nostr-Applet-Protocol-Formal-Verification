@@ -9,7 +9,7 @@ and the CONFIG paragraph).
 
 | # | Upstream statement (short quote) | Level | Status | Lean |
 |---|---|---|---|---|
-| 1 | Depends: "the runtime MAY persist configuration through storage internally" | MAY | OK | `St.schemas`/`St.values` are their own persistent state (Host.lean:296-297) |
+| 1 | Depends: "the runtime MAY persist configuration through storage internally" | MAY | OK | `St.schemas`/`St.values` are their own persistent state (Host.lean:296-297); durable as `Persist.Persisted.schemas` (raw schema and version) and `.values`; restored by `Persist.restore` |
 | 2 | "callers MUST register a schema before requesting values" | MUST | NAPPLET | Shell answers `no-schema` otherwise (#36) |
 | 3 | `subscribe`: "The shell MUST deliver an immediate initial `config.values` push on subscription" | MUST | RESOLVED (was MISMATCH) (uncovered conflict) | `handle .subscribe` :602 → `deliver` :568. With a schema whose root `required` property has no persisted value and no default, `snapshot` is `none` and the shell pushes `config.schemaError {code:"invalid-schema"}` instead of values. Checked: the root schema `required:["a"]` with `a` a string and no default gives schemaError. Upstream conflicts here with "Every `config.values` ... MUST contain only values that validate". The model's choice is reasonable but is not a README decision. See C1 |
 | 4 | "The reference shim implementation SHOULD ref-count local subscribers" | SHOULD | NAPPLET | Not modelled in `Binding`/`BindingApi` |
