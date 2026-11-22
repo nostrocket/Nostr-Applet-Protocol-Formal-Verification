@@ -37,4 +37,4 @@ Lean: `Napplet/Run/Link.lean` (component), `Napplet/Nap/Link.lean` (pure model),
 | 29 | "NAP-LINK does not grant direct network access" | normative prose | OK | Component emits no fetch/network call: only `.prompt` and `Effect.nap .link "open"` (`Run/Link.lean:339` `handle_effs`, `:447`) |
 
 Summary: OK 20, HOST 6, NAPPLET 3 (rows 1, 5, 7), OPTIONAL 0, DECISION 0 separately
-(decision 25 and the README LINK paragraph back rows 13, 17, 21), RESOLVED (was MISMATCH) 0.
+(decision 25 and the README LINK paragraph back rows 13, 17, 21), MISMATCH 0.

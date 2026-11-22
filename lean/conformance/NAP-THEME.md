@@ -22,7 +22,7 @@ Lean: `Napplet/Run/Theme.lean` (component), `Napplet/Nap/Theme.lean` (pure model
 | 14 | "It MUST NOT infer grants from `R` or `O` tags" | MUST NOT | OK | Uses `Ctx.exposed` only (`Run/Theme.lean:106`); `Capability.lean:46` |
 | 15 | "The shell MAY source the theme from any origin" | MAY | HOST | `HostEvent.themeChanged` (`Host.lean:234-235`, `Host.lean:253-255`) |
 | 16 | Kind 16767: shells sourcing from it "SHOULD map event tags to the typed theme payload as follows" | SHOULD | HOST | Theme sourcing is the host's (`Host.lean:253-255`); not restated |
-| 17 | "Shells MUST strip these prefixes [`url `, `mode `, `m `] when extracting values" | MUST (conditional) | RESOLVED (was MISMATCH) (host doc)) | The host builds the `Theme` JSON, but `Host.lean:253-255` does not state the kind 16767 mapping or the prefix-stripping rule |
+| 17 | "Shells MUST strip these prefixes [`url `, `mode `, `m `] when extracting values" | MUST (conditional) | RESOLVED (was MISMATCH) (host doc) | The host builds the `Theme` JSON, but `Host.lean:253-255` does not state the kind 16767 mapping or the prefix-stripping rule |
 | 18 | "shells that source themes from other origins MUST still deliver a valid Theme payload" | MUST | OK | Invalid host themes are ignored (`Run/Theme.lean:105-107`), so only valid payloads are sent |
 | 19 | "Napplets cannot modify the shell's active theme" | normative prose | OK | No request changes `St.current` (`Run/Theme.lean:98-99`) |
 | 20 | "Shells SHOULD validate [font and background URLs] and MAY provide resources through their mediated resource policy" | SHOULD | OPTIONAL (not listed) | URLs passed through unvalidated (`Run/Theme.lean:42,72`); README's optional list does not mention it |

@@ -49,4 +49,4 @@ Lean: `Napplet/Run/Value.lean` (component), `Napplet/Nap/Value.lean` (pure model
 | 40 | "Payment failures MUST NOT be hidden as success. A settled state requires backend confirmation or a rail-specific proof" | MUST | OK | `Run/Value.lean:362` `outcome` (`settled` only with a preimage, anything unknown is `failed`); invariant `SettledOK` with `settledOK_handle`/`settledOK_onReply`/`settledOK_onEvent` `:892-927`; sign/pay errors are `failed` (`:430,434`); `Nap/Value.lean:227,243` `settled_requires_proof`, `failure_not_success` |
 
 Summary: OK 29, HOST 5, NAPPLET 1, OPTIONAL 1 (row 37, not listed in README),
-DECISION 2 (rows 10, 18), mixed OK/DECISION 2 (rows 30, 38), RESOLVED (was MISMATCH) 0.
+DECISION 2 (rows 10, 18), mixed OK/DECISION 2 (rows 30, 38), MISMATCH 0.

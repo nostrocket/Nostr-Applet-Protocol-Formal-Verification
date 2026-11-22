@@ -7,7 +7,7 @@ Lean: `Napplet/Run/Pow.lean` (component), `Napplet/Nap/Pow.lean` (pure model),
 | # | Upstream statement (short quote) | Level | Status | Lean |
 |---|---|---|---|---|
 | 1 | Depends `identity`: "the runtime stamps the user pubkey (identity domain) into every mined event" | normative | OK | `Run/Pow.lean:382` `stampOf` (`w.user`), applied in `start` `:404`; `checkMined_sound` `:877` (`m.ev.pubkey = st.1`) |
-| 2 | Depends `outbox`: "`mineAndPublish` uses outbox-aware fanout; same publish-consent policy as `outbox`" | normative | RESOLVED (was MISMATCH) (consent policy) / HOST (fanout)) | See rows 33-34 |
+| 2 | Depends `outbox`: "`mineAndPublish` uses outbox-aware fanout; same publish-consent policy as `outbox`" | normative | RESOLVED (was MISMATCH) (consent policy) / HOST (fanout) | See rows 33-34 |
 | 3 | "napplets never receive signing keys; signing and publishing remain shell operations" | normative | OK | Only `Call.sign` / `Call.publish` (`Run/Pow.lean:593,613,619`); no key material in any message |
 | 4 | `EventTemplate.kind` (uint), `content` required; `tags`, `created_at` optional | schema | OK | `Run/Pow.lean:160` `templateOf?` (else `"invalid template"`, `:206`); `templateOf?_templateJson` `:655` |
 | 5 | `PowOptions` all optional (`workers` uint, `priority` int, `timeoutMs` uint, `commitCreatedAt` bool) | schema | OK | `Run/Pow.lean:171` `optsOf?`; `optsOf?_optsJson` `:659` |
@@ -23,7 +23,7 @@ Lean: `Napplet/Run/Pow.lean` (component), `Napplet/Nap/Pow.lean` (pure model),
 | 15 | "fanned across `opts.workers` workers (capped by shell policy)" | normative | OK | `Run/Pow.lean:508` (`max 1 (min Cfg.maxWorkers workers)`), passed in `mineArgs` `:389` |
 | 16 | "`commitCreatedAt: true` (default) then freezes it for the whole search" | normative | OK | `Run/Pow.lean:509` (default `true`), `:602` (host's `created_at` used only when `commit = false`); `Host.lean:553` |
 | 17 | "`opts.timeoutMs` bounds **mining** time only and does not count queue wait" | normative | OK / HOST | `timeoutMs` sent only in the `mine` call made at start (`Run/Pow.lean:393`); host enforces (`Host.lean:553`) |
-| 18 | "the shell MUST sign the committed event **verbatim**" (mined event published later through RELAY/OUTBOX) | MUST | RESOLVED (was MISMATCH) (edge)) | Relay/Outbox sign `EventTemplate.stamp w.user w.now` (`Event.lean:58`; `Run/Relay.lean:306`), dropping the submitted `pubkey` (README decision 30). Verbatim when the user is unchanged; if the active user changed since mining, the event is silently re-stamped with the new pubkey instead of being rejected. See row 31 |
+| 18 | "the shell MUST sign the committed event **verbatim**" (mined event published later through RELAY/OUTBOX) | MUST | RESOLVED (was MISMATCH) (edge) | Relay/Outbox sign `EventTemplate.stamp w.user w.now` (`Event.lean:58`; `Run/Relay.lean:306`), dropping the submitted `pubkey` (README decision 30). Verbatim when the user is unchanged; if the active user changed since mining, the event is silently re-stamped with the new pubkey instead of being rejected. See row 31 |
 | 19 | `mineAndPublish`: "There is **no relay argument**: relay selection is shell policy" | normative | OK | `Call.publish e none` `Run/Pow.lean:619`; `onReply_publish_verbatim` `:1030` (`r = none`) |
 | 20 | "`job.completed` rejects with `"publish failed"`/`"publish denied"` if the proof of work succeeded but publishing did not" | normative | OK | `pow.done` with `ok:false` and that `error` (`Run/Pow.lean:586,615,620,622,626,628`); rejection of the promise is the binding's job (NAPPLET, `BindingApi.lean:219`) |
 | 21 | `queue()`: "summary of all of the napplet's tracked jobs ... Ordering reflects the shell's current schedule" | normative | OK | `Run/Pow.lean:525-527` (own jobs, submission order = FIFO schedule) |
@@ -42,7 +42,7 @@ Lean: `Napplet/Run/Pow.lean` (component), `Napplet/Nap/Pow.lean` (pure model),
 | 34 | "MUST respond to every request with a result carrying the same `id`, and MUST key every push ... to the napplet-supplied `jobId`" | MUST | OK | Every `handle` branch sends its `.result` (`Run/Pow.lean:501-564`); decode errors answered when `id` is a string (`:197-241`, README decision 31); pushes use `j.jobId` (`:340,347,358,364`); `Nap/Pow.lean:196` `pushes_to_owner` |
 | 35 | "MUST sign mined events only through its normal signing path; for a previously-`mine`d event submitted for publish, MUST sign it verbatim without re-stamping committed fields, or reject it" | MUST | OK (mineAndPublish) / RESOLVED (was MISMATCH) (edge, publish via RELAY/OUTBOX) | `Call.sign` and `keeps` check (`Run/Pow.lean:434,616-620`), `onReply_publish_verbatim` `:1030`. Later publish of a `mine` result: see row 18 |
 | 36 | "For `mineAndPublish`, the shell MUST publish using outbox-aware fanout (no napplet-supplied relays)" | MUST | OK / HOST | `Call.publish e none` (`Run/Pow.lean:619`); host selects relays outbox-aware (`Host.lean:557`) |
-| 37 | "... and SHOULD apply the same publish consent policy as NAP-OUTBOX" | SHOULD | RESOLVED (was MISMATCH) (see row 44)) | Pow uses its own prompt (`Cfg.publishConsent`, `Run/Pow.lean:328,587`); NAP-OUTBOX's policy is `Run.Outbox.Cfg.canWrite` (`Run/Outbox.lean:101,536`), which Pow never consults |
+| 37 | "... and SHOULD apply the same publish consent policy as NAP-OUTBOX" | SHOULD | RESOLVED (was MISMATCH) (see row 44) | Pow uses its own prompt (`Cfg.publishConsent`, `Run/Pow.lean:328,587`); NAP-OUTBOX's policy is `Run.Outbox.Cfg.canWrite` (`Run/Outbox.lean:101,536`), which Pow never consults |
 | 38 | "SHOULD throttle `pow.progress` and SHOULD preserve best-nonce and hash counters across `pause`/`resume`" | SHOULD | HOST / OK | Throttle: `Host.lean:553`. Counters: `Job.progress` kept across `pauseOne`/`resumeOne`, host keeps its search state (`Host.lean:554`) |
 | 39 | "MAY queue jobs, cap concurrent jobs, total workers, and maximum `target`, and MAY enforce ACL checks on mine, publish, and queue inspection" | MAY | OK / OPTIONAL | Caps: `Cfg` `Run/Pow.lean:318-328`. No ACL on mine or queue inspection (queue/hashrate are already limited to the caller's own jobs); not listed in README optional behaviours |
 | 40 | "The shell MUST cap maximum `target`, concurrent jobs, and total workers, and SHOULD enforce `timeoutMs`" | MUST / SHOULD | OK / HOST | `Cfg.maxTarget` 32, `maxJobs` 32, `maxConcurrent` 1, `maxWorkers` 4 per job (`Run/Pow.lean:318-328`), enforced `Nap/Pow.lean:85-86`, `Run/Pow.lean:380,508`; `timeoutMs` enforced by the host (`Host.lean:553`) |
@@ -55,7 +55,7 @@ Lean: `Napplet/Run/Pow.lean` (component), `Napplet/Nap/Pow.lean` (pure model),
 
 Summary: OK 32, HOST 1 (row 28), NAPPLET 0, OPTIONAL 0, DECISION 0 alone; mixed rows:
 OK/HOST 4 (17, 36, 38, 40), OK/DECISION 2 (23, 31), OK/OPTIONAL 1 (39);
-RESOLVED (was MISMATCH) rows 2, 18, 37, 44 plus OK/RESOLVED (was MISMATCH) rows 35, 43, two distinct issues:
+MISMATCH rows 2, 18, 37, 44 plus OK/MISMATCH rows 35, 43, two distinct issues (both resolved):
 
 1. Rows 2, 37, 44: `mineAndPublish` skips the write policy (`canWrite`) and the no-user
    check that RELAY/OUTBOX apply to any signed publish.
