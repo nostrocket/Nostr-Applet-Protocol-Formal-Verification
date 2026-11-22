@@ -1,0 +1,21 @@
+import test from 'node:test';
+import { quotaReply, validEnvelope } from '/Users/gareth/git/napplets/hypergolic/runtime/src/guest-envelope.ts';
+const o=(l:string,v:unknown)=>console.log(l,JSON.stringify(v));
+test('envelope', ()=>{
+  const d=['theme','identity','storage','config'];
+  o('Q1 burst storage.get', quotaReply({type:'storage.get',id:'a',key:'k'}, d));
+  o('Q2 burst identity.getPublicKey', quotaReply({type:'identity.getPublicKey',id:'p'}, d));
+  o('Q3 burst theme.get', quotaReply({type:'theme.get',id:'t'}, d));
+  o('Q4 burst config.get', quotaReply({type:'config.get',id:'g'}, d));
+  o('Q5 burst identity.getProfile', quotaReply({type:'identity.getProfile',id:'p'}, d));
+  o('V1 theme.get extra', validEnvelope({type:'theme.get',id:'t',x:1}));
+  o('V2 theme.get empty id', validEnvelope({type:'theme.get',id:''}));
+  o('V3 config.registerSchema no schema', validEnvelope({type:'config.registerSchema',id:'r'}));
+  o('V4 config.registerSchema version -1', validEnvelope({type:'config.registerSchema',id:'r',schema:{type:'object',properties:{}},version:-1}));
+  o('V5 config.subscribe with id', validEnvelope({type:'config.subscribe',id:'s'}));
+  o('V6 config.get extra', validEnvelope({type:'config.get',id:'g',x:1}));
+  o('V7 identity.getList no listType', validEnvelope({type:'identity.getList',id:'l'}));
+  o('V8 identity.getPublicKey extra', validEnvelope({type:'identity.getPublicKey',id:'p',x:1}));
+  o('V9 storage.get extra', validEnvelope({type:'storage.get',id:'s',key:'k',x:1}));
+  o('V10 storage.get empty id', validEnvelope({type:'storage.get',id:'',key:'k'}));
+});

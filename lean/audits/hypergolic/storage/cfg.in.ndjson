@@ -1,0 +1,27 @@
+{"config":{"display":{"devices":[{"id":"desk","width":800,"height":480,"type":"eink"}],"permitted":{"default":true}},"upload":{"rails":[{"rail":"nip96","server":"https://files.example.com/api/v2/media","returns":["https"]},{"rail":"blossom","server":"https://blossom.example.com","returns":["https","blossom"]}],"defaultRail":"nip96","maxBytes":104857600,"mimeTypes":["image/png","image/jpeg","application/pdf"]}},"host":{"hash":"test","sniff":"test"}}
+{"t":"create","w":1,"manifest":{"kind":35129,"pubkey":"0000000000000000000000000000000000000000000000000000000000000abc","content":"test napplet","tags":[["d","my-napplet"],["x","00000000000000000000000000000000000000000000000000000000000fbb62"]],"id":"0000000000000000000000000000000000000000000000000000000000000011"},"bytes":"bXktbmFwcGxldA==","inst":1}
+{"t":"load","w":1}
+{"t":"hello","w":1,"ports":[7]}
+{"t":"message","port":7,"msg":{"type":"config.get","id":"g0"}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S1","schema":{"type":"object","properties":{"n":{"type":"number","x-napplet-secret":true,"default":1}}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S3","schema":{"type":"object","properties":{"n":{"type":"object","properties":{},"x-napplet-secret":true,"default":{}}}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S5","schema":{"type":"object"}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S6","schema":{"type":"object","properties":{},"additionalProperties":{"type":"string"}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S7","schema":{"type":"object","properties":{"s":{"type":"string","minimum":1}}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S8","schema":{"type":"object","properties":{},"$version":"x"}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S9","schema":{"type":"object","properties":{"s":{"type":"string","$schema":"http://json-schema.org/draft-07/schema#"}}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S10","schema":{"type":"object","properties":{"s":{"type":"string","x-foo":1}}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S11","schema":{"type":"object","properties":{},"patternProperties":{}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S12","schema":{"type":"object","properties":{},"$dynamicRef":"#a"}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S13","schema":{"type":"object","properties":{"a":{"type":"string"}},"required":["a","a"]}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S14","schema":{"type":"object","properties":{"a":{"type":"number","minimum":5,"maximum":1}}}}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"S4","schema":{"type":"object","properties":{"t":{"type":"string","enum":["a"],"default":"b"}}}}}
+{"t":"message","port":7,"msg":{"type":"config.get","id":"G4"}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"A","schema":{"type":"object","properties":{"theme":{"type":"string","enum":["dark","light"],"default":"dark"}}},"version":10}}
+{"t":"message","port":7,"msg":{"type":"config.get","id":"GA"}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"B","schema":{"type":"object","properties":{"theme":{"type":"string","enum":["dark","light"],"default":"light"}}},"version":11}}
+{"t":"message","port":7,"msg":{"type":"config.get","id":"GB"}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"MM","schema":{"type":"object","properties":{},"$version":11},"version":12}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"N","schema":{"type":"object","default":{"a":{"x":1}},"properties":{"a":{"type":"object","default":{},"properties":{"x":{"type":"integer"}}}}},"version":13}}
+{"t":"message","port":7,"msg":{"type":"config.get","id":"GN"}}
+{"t":"message","port":7,"msg":{"type":"config.registerSchema","id":"OLD","schema":{"type":"object","properties":{}},"version":1}}

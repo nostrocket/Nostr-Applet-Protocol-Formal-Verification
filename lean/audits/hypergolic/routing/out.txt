@@ -1,0 +1,49 @@
+(node:47230) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/gareth/git/napplets/hypergolic/tests/routing/harness.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/gareth/git/napplets/hypergolic/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+missing action: {"type":"intent.invoke","id":"i","request":{"archetype":"profile","action":"open","convention":"napplet:profile/open"}}
+missing convention: {"type":"intent.invoke","id":"i","request":{"archetype":"profile","action":"open"}}
+query convention: {"type":"intent.invoke","id":"i","request":{"archetype":"profile","action":"open","convention":"napplet:profile/open","payload":{"pubkey":"abc"}}}
+extra sender member: THROWS Invalid routing request
+handlerHint: THROWS Invalid routing request
+intent.launch: THROWS Invalid routing request
+inc.subscribe no topic: THROWS Invalid routing request
+inc.channel.open no target: THROWS Invalid routing request
+inc.emit napplet:Note/open: THROWS Invalid routing request
+inc.emit napplet:foo: THROWS Invalid routing request
+inc.subscribe napplet:foo: {"type":"inc.subscribe","id":"s","topic":"napplet:foo"}
+inc.emit query topic: {"type":"inc.emit","topic":"napplet:note/open","payload":{"a":"1"}}
+inc.emit empty topic: THROWS Invalid routing request
+✔ P1 parse divergences (1.18825ms)
+INC senders: [{"type":"inc.event","topic":"t1","sender":"caller","payload":1},{"type":"inc.event","topic":"t1","sender":"caller","payload":2}]
+open to shared d: {"type":"inc.channel.open.result","id":"o","error":"peer unavailable"}
+open (self+other share d): undefined
+✖ P2 INC sender/peer is the bare d tag, shared across publishers (25017.62725ms)
+9th open (limit 8): {"type":"inc.channel.open.result","id":"o8","error":"peer unavailable"}
+close msgs: [{"type":"inc.channel.closed","channelId":"channel-4","reason":"closed"},{"type":"inc.channel.closed","channelId":"channel-4","reason":"closed"}]
+✔ P3 channel limit and close reason (55.422ms)
+query-topic delivery to exact subscriber of napplet:note/open: [{"type":"inc.event","topic":"napplet:note/open","sender":"caller","payload":{"a":"1"}}]
+✔ P4 inc.emit query topic transposed by runtime (45.029625ms)
+legacy candidate: {"dTag":"notes","title":"notes","actions":["open","edit"],"conventions":["napplet:note/open","napplet:note/edit"],"isDefault":false}
+✔ P5 legacy archetype-tag handler is an intent target (43.3825ms)
+explicit unknown: {"type":"intent.invoke.result","id":"u","result":{"archetype":"napptest","action":"open","convention":"napplet:napptest/open","ok":false,"handled":false,"error":"no handler"}}
+prompted for incompatible explicit handler: "intent"
+explicit incompatible: {"type":"intent.invoke.result","id":"b","result":{"archetype":"napptest","action":"edit","convention":"napplet:napptest/edit","ok":false,"handled":false,"error":"unsupported action"}}
+convention/action mismatch: {"type":"intent.invoke.result","id":"m","result":{"archetype":"napptest","action":"open","convention":"napplet:napptest/edit","ok":false,"handled":false,"error":"no handler"}}
+no handler: {"type":"intent.invoke.result","id":"n","result":{"archetype":"emoji-list","action":"open","convention":"napplet:emoji-list/open","ok":false,"handled":false,"error":"no handler"}}
+✔ P6 explicit unknown handler / explicit incompatible handler (41.745083ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 1
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25332.801792
+
+✖ failing tests:
+
+test at ../../../../../private/tmp/claude-501/-Users-gareth--claude-spares-spare-nPELUd/2d3ddda5-81cc-4352-8175-621fb8a966a1/scratchpad/routing/audit.test.ts:22:1
+✖ P2 INC sender/peer is the bare d tag, shared across publishers (25017.62725ms)
+  'test timed out after 25000ms'

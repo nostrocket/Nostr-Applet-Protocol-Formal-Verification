@@ -1,0 +1,79 @@
+display#3 display.list
+  oracle: {"type":"display.list.result","id":"d1","displays":[{"id":"desk","width":800,"height":480,"type":"eink"}]}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+display#4 display.push
+  oracle: {"type":"display.push.result","id":"d2"}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+display#5 display.push
+  oracle: {"type":"display.push.result","id":"d3","error":"not-found"}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+intent-launch-teardown#8 intent.launch
+  oracle: (call)
+  hyper:  rejected
+  DIFF: oracle acts (host call/effect), Hypergolic drops at ingress
+intent-launch#8 intent.launch
+  oracle: (call)
+  hyper:  rejected
+  DIFF: oracle acts (host call/effect), Hypergolic drops at ingress
+intent#11 intent.launch
+  oracle: {"type":"intent.launch.result","id":"l3","result":{"ok":false,"error":"not installed"}}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+media#3 media.session.create
+  oracle: {"type":"media.session.create.result","id":"m1","sessionId":"s1","owner":"napplet"}
+  hyper:  media-dropped {"type":"media.session.create.result","id":"m1","error":"Unsupported media request."}
+  DIFF: reply differs
+media#5 media.session.destroy
+  oracle: {"type":"media.session.ended","sessionId":"s1","reason":"destroyed"}
+  hyper:  media-dropped
+  DIFF: oracle replies, Hypergolic drops at ingress
+pow#4 pow.mine
+  oracle: {"type":"pow.mine.result","id":"m1","jobId":"job-1","accepted":true,"state":"mining"}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+pow#5 pow.mine
+  oracle: {"type":"pow.mine.result","id":"m2","jobId":"job-1","accepted":false,"state":"error","error":"duplicate jobId"}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+relay-ciphertext#4 relay.publish
+  oracle: {"type":"relay.publish.result","id":"b3","ok":false,"error":"blocked: ciphertext from napplet"}
+  hyper:  rejected {"type":"relay.publish.result","id":"b3","ok":false,"error":"Invalid event template."}
+  DIFF: reply differs
+relay-ciphertext#5 relay.publishEncrypted
+  oracle: (call)
+  hyper:  rejected
+  DIFF: oracle acts (host call/effect), Hypergolic drops at ingress
+shell-check#3 shell.check
+  oracle: {"type":"shell.check.result","id":"c1","compatibility":{"status":"incompatible","missingRequired":["relay"],"missingOptional":[]}}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+shell-check#4 shell.check
+  oracle: {"type":"shell.check.result","id":"c2","compatibility":{"status":"compatible","missingRequired":[],"missingOptional":["relay"]}}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+shell#5 shell.check
+  oracle: {"type":"shell.check.result","id":"c3","error":"invalid manifest"}
+  hyper:  rejected
+  DIFF: oracle replies, Hypergolic drops at ingress
+upload-refused#4 upload.upload
+  oracle: (call)
+  hyper:  rejected {"type":"upload.upload.result","id":"u1","error":"unsupported rail"}
+  DIFF: Hypergolic replies where oracle is silent
+upload#4 upload.upload
+  oracle: (call)
+  hyper:  rejected {"type":"upload.upload.result","id":"u1","error":"unsupported rail"}
+  DIFF: Hypergolic replies where oracle is silent
+value-send-refused#4 value.send
+  oracle: (call)
+  hyper:  rejected
+  DIFF: oracle acts (host call/effect), Hypergolic drops at ingress
+value#4 value.quote
+  oracle: (call)
+  hyper:  rejected
+  DIFF: oracle acts (host call/effect), Hypergolic drops at ingress
+
+message steps on bound ports: 97; forwarded to NAP handlers: 75; same at ingress: 3; diffs: 19
+transport inputs with no Hypergolic equivalent: {"hello":51,"portClosed":5}

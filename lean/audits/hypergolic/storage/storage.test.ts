@@ -1,0 +1,32 @@
+import test from 'node:test';
+import { createCapabilityBroker } from '/Users/gareth/git/napplets/hypergolic/src/runtime/capability-broker.ts';
+import { NativeLeases } from '/Users/gareth/git/napplets/hypergolic/tests/runtime/native-leases.ts';
+import { hex, setup } from '/Users/gareth/git/napplets/hypergolic/tests/storage/harness.ts';
+const reg = (p={}) => ({ sessionId: 's-1', generation: 'g-1', epoch: 0, user: hex(1), publisher: hex(2), appId: 'my-napplet', version: hex(3), instanceId: 'i-1', fixture: 'state-lab', domains: ['theme','identity','storage'], ...p });
+test('storage divergences', async t => {
+  const { database } = await setup(t), native = new NativeLeases();
+  async function invoke(req: unknown, config = reg()) { const b = createCapabilityBroker(database, native, {registration: config as any, assertActive() {}}); const tok = native.add(config as any, req); await b.dispatch(tok); return native.results.get(tok); }
+  const log = (l: string, v: unknown) => console.log(l, JSON.stringify(v));
+  log('T1 trace b9 set no value:', await invoke({type:'storage.set', id:'b9', key:'theme'}));
+  log('T2 bad scope:', await invoke({type:'storage.get', id:'x2', key:'k', scope:'global'}));
+  log('T3 extra member:', await invoke({type:'storage.get', id:'x3', key:'k', extra:1}));
+  log('T4 value 300KB:', await invoke({type:'storage.set', id:'x4', key:'big', value:'v'.repeat(300*1024)}));
+  log('T5 key 2000B:', await invoke({type:'storage.set', id:'x5', key:'k'.repeat(2000), value:'v'}));
+  for (let i=0;i<256;i++) await invoke({type:'storage.set', id:'fill'+i, key:'k'+i, value:'v'});
+  log('T6 257th tiny key:', await invoke({type:'storage.set', id:'x6', key:'k256', value:'v'}));
+  const c2 = reg({appId:'quota-app'});
+  await invoke({type:'storage.set', id:'q1', key:'a', value:'v'.repeat(250*1024)}, c2);
+  await invoke({type:'storage.set', id:'q2', key:'b', value:'v'.repeat(250*1024)}, c2);
+  log('T7 over 512KB:', await invoke({type:'storage.set', id:'q3', key:'c', value:'v'.repeat(20*1024)}, c2));
+  log('T8 dup id first:', await invoke({type:'storage.get', id:'dup', key:'k0'}));
+  log('T8 dup id second:', await invoke({type:'storage.get', id:'dup', key:'k0'}));
+  const c3 = reg({appId:'order-app'});
+  await invoke({type:'storage.set', id:'o1', key:'b', value:'1'}, c3);
+  await invoke({type:'storage.set', id:'o2', key:'a', value:'1'}, c3);
+  await invoke({type:'storage.set', id:'o3', key:'c', value:'1'}, c3);
+  log('T9 keys order (set b,a,c):', await invoke({type:'storage.keys', id:'o4'}, c3));
+  log('T10 id empty:', await invoke({type:'storage.get', id:'', key:'k'}));
+  log('T11 id 200 chars:', await invoke({type:'storage.get', id:'i'.repeat(200), key:'k'}));
+  log('T12 id 128 chars:', await invoke({type:'storage.get', id:'i'.repeat(128), key:'k0'}));
+  log('T13 user B reads user A shared key:', await invoke({type:'storage.get', id:'u1', key:'k0'}, reg({user: hex(9)})));
+});
