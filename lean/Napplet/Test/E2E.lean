@@ -395,4 +395,41 @@ def ask (req answer : String) : List Runtime.Output :=
 #guard sendsAre 7 (ask "{ \"type\": \"identity.getBadges\", \"id\": \"q9\" }" "{ \"badges\": [{ \"id\": \"badge1...\", \"name\": \"Early Adopter\", \"awardedBy\": \"cd34...\" }] }")
   ["{ \"type\": \"identity.getBadges.result\", \"id\": \"q9\", \"badges\": [{ \"id\": \"badge1...\", \"name\": \"Early Adopter\", \"awardedBy\": \"cd34...\" }] }"]
 
+/-! ### INC and CVM examples verbatim, under a shell policy that names ids as upstream assumes -/
+
+/-- NAP-INC: "Identifier encoding is runtime policy." This shell names its endpoints and
+channels the way upstream's examples assume ("Assume the opener endpoint identifier is
+`endpoint-music-controller` and the target endpoint identifier is `endpoint-media-player`"). -/
+def namedCfg : Config :=
+  { testCfg with
+    endpointName := fun w => if w = 1 then some "endpoint-music-controller"
+                             else if w = 2 then some "endpoint-media-player" else none
+    incCfg := { channelName := fun n => if n = 0 then some "c-abc" else none } }
+
+def sNamed : RtState :=
+  (runAll testHost namedCfg (.init namedCfg)
+    (bootInputs 1 7 "music-controller" [1] ++ bootInputs 2 8 "media-player" [2])).1
+
+def pn (s : RtState) (p : PortId) (t : String) := Runtime.step testHost namedCfg s (.message p (Json.parse! t))
+
+def sNOpen := pn sNamed 7 "{ \"type\": \"inc.channel.open\", \"id\": \"ch1\", \"target\": \"endpoint-media-player\" }"
+#guard sendsAre 8 sNOpen.2 ["{ \"type\": \"inc.channel.opened\", \"channelId\": \"c-abc\", \"peer\": \"endpoint-music-controller\" }"]
+#guard sendsAre 7 sNOpen.2 ["{ \"type\": \"inc.channel.open.result\", \"id\": \"ch1\", \"channelId\": \"c-abc\", \"peer\": \"endpoint-media-player\" }"]
+#guard sendsAre 8 (pn sNOpen.1 7 "{ \"type\": \"inc.channel.emit\", \"channelId\": \"c-abc\", \"payload\": { \"command\": \"play\", \"track\": 3 } }").2
+  ["{ \"type\": \"inc.channel.event\", \"channelId\": \"c-abc\", \"sender\": \"endpoint-music-controller\", \"payload\": { \"command\": \"play\", \"track\": 3 } }"]
+#guard sendsAre 7 (pn sNOpen.1 8 "{ \"type\": \"inc.channel.emit\", \"channelId\": \"c-abc\", \"payload\": { \"status\": \"playing\", \"track\": 3 } }").2
+  ["{ \"type\": \"inc.channel.event\", \"channelId\": \"c-abc\", \"sender\": \"endpoint-media-player\", \"payload\": { \"status\": \"playing\", \"track\": 3 } }"]
+#guard sendsAre 7 (pn sNOpen.1 7 "{ \"type\": \"inc.channel.close\", \"channelId\": \"c-abc\" }").2
+  ["{ \"type\": \"inc.channel.closed\", \"channelId\": \"c-abc\" }"]
+
+/-- NAP-CVM with the optional registry implemented. -/
+def regCfg : Config := { testCfg with cvmCfg := { registry := true } }
+def sReg0 : RtState := (runAll testHost regCfg (.init regCfg) (bootInputs 1 7 "my-napplet" [109])).1
+def sDesc := Runtime.step testHost regCfg sReg0 (.message 7 (Json.parse! "{ \"type\": \"cvm.registry.describe\", \"id\": \"s1\", \"selector\": { \"family\": \"relatr\" } }"))
+#guard match calls sDesc.2 with
+  | [_, (t, .nap .cvm "registry.describe" _)] =>
+    sendsAre 7 (Runtime.step testHost regCfg sDesc.1 (.reply t (.json (Json.parse! "{\"entry\": { \"family\": \"relatr\", \"schemaHashes\": [\"a7f3d9...\"], \"selected\": { \"pubkey\": \"65a334...\", \"relays\": [\"wss://relay.example.com\"] }, \"tools\": [ { \"name\": \"search_profiles\", \"schemaHash\": \"a7f3d9...\", \"inputSchema\": { \"type\": \"object\", \"properties\": { \"q\": { \"type\": \"string\" } }, \"required\": [\"q\"] } } ] }}")))).2
+      ["{ \"type\": \"cvm.registry.describe.result\", \"id\": \"s1\", \"entry\": { \"family\": \"relatr\", \"schemaHashes\": [\"a7f3d9...\"], \"selected\": { \"pubkey\": \"65a334...\", \"relays\": [\"wss://relay.example.com\"] }, \"tools\": [ { \"name\": \"search_profiles\", \"schemaHash\": \"a7f3d9...\", \"inputSchema\": { \"type\": \"object\", \"properties\": { \"q\": { \"type\": \"string\" } }, \"required\": [\"q\"] } } ] } }"]
+  | _ => false
+
 end Napplet.Test

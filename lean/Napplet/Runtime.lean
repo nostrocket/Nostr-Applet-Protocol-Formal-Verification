@@ -57,6 +57,11 @@ namespace Napplet.Runtime
 structure Config where
   shell : ShellConfig
   storageQuota : Nat := NapStorage.defaultQuota
+  /-- NAP-INC endpoint identifier policy ("Identifier encoding is runtime policy"): a
+  name for a window, or `none` for the default `endpoint-<window>`. Contract: injective
+  over windows and never a default-form name, so identifiers stay unique and are never
+  reused. -/
+  endpointName : WindowId → Option String := fun _ => none
   incCfg : Run.Inc.Cfg := {}
   intentCfg : Run.Intent.Cfg := {}
   notifyCfg : Run.Notify.Cfg := {}
@@ -80,6 +85,8 @@ structure RtState where
   now : Nat
   /-- The shell user's pubkey, `""` when none. -/
   user : String
+  /-- The shell's endpoint identifier policy (`Config.endpointName`). -/
+  names : WindowId → Option String
   shellNap : Run.Shell.St
   theme : Run.Theme.St
   identity : Run.Identity.St
@@ -106,6 +113,7 @@ def RtState.init (cfg : Config) : RtState where
   ports := []
   now := 0
   user := ""
+  names := cfg.endpointName
   shellNap := Run.Shell.St.init
   theme := Run.Theme.St.init
   identity := Run.Identity.St.init
@@ -177,7 +185,7 @@ def ofShell : Napplet.Output → List Output
 /-! ### Views -/
 
 def ctxOf (s : RtState) (p : PortId) : Option Ctx :=
-  (s.shell.bindings p).map fun b => Ctx.ofBinding p b (s.inst b.window)
+  (s.shell.bindings p).map fun b => Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
 
 def world (s : RtState) : World :=
   { now := s.now, live := s.ports.filterMap (ctxOf s), user := s.user }
@@ -937,7 +945,7 @@ binding (`Ctx.ofBinding`). -/
 theorem message_dispatch {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
     {env : Envelope} {b : Binding} {d : Domain} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some d) (hx : d ∈ b.exposed) :
-    step h cfg s (.message p j) = napStep h (world s) (Ctx.ofBinding p b (s.inst b.window)) s j d := by
+    step h cfg s (.message p j) = napStep h (world s) (Ctx.ofBinding p b (s.inst b.window) (s.names b.window)) s j d := by
   simp [step, he, Napplet.step, hb, hd, hx, ctxOf]
 
 
@@ -948,7 +956,7 @@ theorem message_shellNap {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j
     {env : Envelope} {b : Binding} {r : Run.Shell.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .shell) (hx : Domain.shell ∈ b.exposed)
     (hr : Run.Shell.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with shellNap := (Run.Shell.handle h (world s) cx s.shellNap r).1 },
        (Run.Shell.handle h (world s) cx s.shellNap r).2.map ofEff) := by
@@ -963,7 +971,7 @@ theorem message_theme {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : 
     {env : Envelope} {b : Binding} {r : Run.Theme.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .theme) (hx : Domain.theme ∈ b.exposed)
     (hr : Run.Theme.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with theme := (Run.Theme.handle h (world s) cx s.theme r).1 },
        (Run.Theme.handle h (world s) cx s.theme r).2.map ofEff) := by
@@ -978,7 +986,7 @@ theorem message_identity {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j
     {env : Envelope} {b : Binding} {r : Run.Identity.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .identity) (hx : Domain.identity ∈ b.exposed)
     (hr : Run.Identity.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with identity := (Run.Identity.handle h (world s) cx s.identity r).1 },
        (Run.Identity.handle h (world s) cx s.identity r).2.map ofEff) := by
@@ -993,7 +1001,7 @@ theorem message_storage {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j 
     {env : Envelope} {b : Binding} {r : Run.Storage.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .storage) (hx : Domain.storage ∈ b.exposed)
     (hr : Run.Storage.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with storage := (Run.Storage.handle h (world s) cx s.storage r).1 },
        (Run.Storage.handle h (world s) cx s.storage r).2.map ofEff) := by
@@ -1008,7 +1016,7 @@ theorem message_inc {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Js
     {env : Envelope} {b : Binding} {r : Run.Inc.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .inc) (hx : Domain.inc ∈ b.exposed)
     (hr : Run.Inc.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with inc := (Run.Inc.handle h (world s) cx s.inc r).1 },
        (Run.Inc.handle h (world s) cx s.inc r).2.map ofEff) := by
@@ -1023,7 +1031,7 @@ theorem message_intent {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j :
     {env : Envelope} {b : Binding} {r : Run.Intent.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .intent) (hx : Domain.intent ∈ b.exposed)
     (hr : Run.Intent.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with intent := (Run.Intent.handle h (world s) cx s.intent r).1 },
        (Run.Intent.handle h (world s) cx s.intent r).2.map ofEff) := by
@@ -1038,7 +1046,7 @@ theorem message_notify {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j :
     {env : Envelope} {b : Binding} {r : Run.Notify.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .notify) (hx : Domain.notify ∈ b.exposed)
     (hr : Run.Notify.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with notify := (Run.Notify.handle h (world s) cx s.notify r).1 },
        (Run.Notify.handle h (world s) cx s.notify r).2.map ofEff) := by
@@ -1053,7 +1061,7 @@ theorem message_display {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j 
     {env : Envelope} {b : Binding} {r : Run.Display.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .display) (hx : Domain.display ∈ b.exposed)
     (hr : Run.Display.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with display := (Run.Display.handle h (world s) cx s.display r).1 },
        (Run.Display.handle h (world s) cx s.display r).2.map ofEff) := by
@@ -1068,7 +1076,7 @@ theorem message_keys {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : J
     {env : Envelope} {b : Binding} {r : Run.Keys.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .keys) (hx : Domain.keys ∈ b.exposed)
     (hr : Run.Keys.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with keys := (Run.Keys.handle h (world s) cx s.keys r).1 },
        (Run.Keys.handle h (world s) cx s.keys r).2.map ofEff) := by
@@ -1083,7 +1091,7 @@ theorem message_relay {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : 
     {env : Envelope} {b : Binding} {r : Run.Relay.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .relay) (hx : Domain.relay ∈ b.exposed)
     (hr : Run.Relay.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with relay := (Run.Relay.handle h (world s) cx s.relay r).1 },
        (Run.Relay.handle h (world s) cx s.relay r).2.map ofEff) := by
@@ -1098,7 +1106,7 @@ theorem message_outbox {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j :
     {env : Envelope} {b : Binding} {r : Run.Outbox.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .outbox) (hx : Domain.outbox ∈ b.exposed)
     (hr : Run.Outbox.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with outbox := (Run.Outbox.handle h (world s) cx s.outbox r).1 },
        (Run.Outbox.handle h (world s) cx s.outbox r).2.map ofEff) := by
@@ -1113,7 +1121,7 @@ theorem message_media {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : 
     {env : Envelope} {b : Binding} {r : Run.Media.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .media) (hx : Domain.media ∈ b.exposed)
     (hr : Run.Media.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with media := (Run.Media.handle h (world s) cx s.media r).1 },
        (Run.Media.handle h (world s) cx s.media r).2.map ofEff) := by
@@ -1128,7 +1136,7 @@ theorem message_config {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j :
     {env : Envelope} {b : Binding} {r : Run.Config.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .config) (hx : Domain.config ∈ b.exposed)
     (hr : Run.Config.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with config := (Run.Config.handle h (world s) cx s.config r).1 },
        (Run.Config.handle h (world s) cx s.config r).2.map ofEff) := by
@@ -1143,7 +1151,7 @@ theorem message_resource {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j
     {env : Envelope} {b : Binding} {r : Run.Resource.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .resource) (hx : Domain.resource ∈ b.exposed)
     (hr : Run.Resource.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with resource := (Run.Resource.handle h (world s) cx s.resource r).1 },
        (Run.Resource.handle h (world s) cx s.resource r).2.map ofEff) := by
@@ -1158,7 +1166,7 @@ theorem message_upload {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j :
     {env : Envelope} {b : Binding} {r : Run.Upload.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .upload) (hx : Domain.upload ∈ b.exposed)
     (hr : Run.Upload.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with upload := (Run.Upload.handle h (world s) cx s.upload r).1 },
        (Run.Upload.handle h (world s) cx s.upload r).2.map ofEff) := by
@@ -1173,7 +1181,7 @@ theorem message_link {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : J
     {env : Envelope} {b : Binding} {r : Run.Link.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .link) (hx : Domain.link ∈ b.exposed)
     (hr : Run.Link.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with link := (Run.Link.handle h (world s) cx s.link r).1 },
        (Run.Link.handle h (world s) cx s.link r).2.map ofEff) := by
@@ -1188,7 +1196,7 @@ theorem message_value {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : 
     {env : Envelope} {b : Binding} {r : Run.Value.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .value) (hx : Domain.value ∈ b.exposed)
     (hr : Run.Value.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with value := (Run.Value.handle h (world s) cx s.value r).1 },
        (Run.Value.handle h (world s) cx s.value r).2.map ofEff) := by
@@ -1203,7 +1211,7 @@ theorem message_cvm {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Js
     {env : Envelope} {b : Binding} {r : Run.Cvm.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .cvm) (hx : Domain.cvm ∈ b.exposed)
     (hr : Run.Cvm.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with cvm := (Run.Cvm.handle h (world s) cx s.cvm r).1 },
        (Run.Cvm.handle h (world s) cx s.cvm r).2.map ofEff) := by
@@ -1218,7 +1226,7 @@ theorem message_pow {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Js
     {env : Envelope} {b : Binding} {r : Run.Pow.Req} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .pow) (hx : Domain.pow ∈ b.exposed)
     (hr : Run.Pow.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({ s with pow := (Run.Pow.handle h (world s) cx s.pow r).1 },
        (Run.Pow.handle h (world s) cx s.pow r).2.map ofEff) := by

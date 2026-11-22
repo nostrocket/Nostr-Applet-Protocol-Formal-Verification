@@ -85,7 +85,12 @@ namespace Napplet.Runtime
 /-- Shell policy and per-NAP configuration. -/
 structure Config where
   shell : ShellConfig
-  storageQuota : Nat := NapStorage.defaultQuota""")
+  storageQuota : Nat := NapStorage.defaultQuota
+  /-- NAP-INC endpoint identifier policy ("Identifier encoding is runtime policy"): a
+  name for a window, or `none` for the default `endpoint-<window>`. Contract: injective
+  over windows and never a default-form name, so identifiers stay unique and are never
+  reused. -/
+  endpointName : WindowId → Option String := fun _ => none""")
 for c in COMPS:
     if c[3]:
         w(f"  {c[3]} : Run.{c[0]}.Cfg := {{}}")
@@ -98,7 +103,9 @@ structure RtState where
   ports : List PortId
   now : Nat
   /-- The shell user's pubkey, `""` when none. -/
-  user : String""")
+  user : String
+  /-- The shell's endpoint identifier policy (`Config.endpointName`). -/
+  names : WindowId → Option String""")
 for c in COMPS:
     w(f"  {c[1]} : Run.{c[0]}.St")
 w("""
@@ -107,7 +114,8 @@ def RtState.init (cfg : Config) : RtState where
   inst := fun _ => 0
   ports := []
   now := 0
-  user := \"\"""")
+  user := \"\"
+  names := cfg.endpointName""")
 for c in COMPS:
     w(f"  {c[1]} := {c[4]}")
 w("""
@@ -162,7 +170,7 @@ def ofShell : Napplet.Output → List Output
 /-! ### Views -/
 
 def ctxOf (s : RtState) (p : PortId) : Option Ctx :=
-  (s.shell.bindings p).map fun b => Ctx.ofBinding p b (s.inst b.window)
+  (s.shell.bindings p).map fun b => Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
 
 def world (s : RtState) : World :=
   { now := s.now, live := s.ports.filterMap (ctxOf s), user := s.user }
@@ -598,7 +606,7 @@ binding (`Ctx.ofBinding`). -/
 theorem message_dispatch {h : Host} {cfg : Config} {s : RtState} {p : PortId} {j : Json}
     {env : Envelope} {b : Binding} {d : Domain} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some d) (hx : d ∈ b.exposed) :
-    step h cfg s (.message p j) = napStep h (world s) (Ctx.ofBinding p b (s.inst b.window)) s j d := by
+    step h cfg s (.message p j) = napStep h (world s) (Ctx.ofBinding p b (s.inst b.window) (s.names b.window)) s j d := by
   simp [step, he, Napplet.step, hb, hd, hx, ctxOf]
 
 """)
@@ -611,7 +619,7 @@ theorem message_{f} {{h : Host}} {{cfg : Config}} {{s : RtState}} {{p : PortId}}
     {{env : Envelope}} {{b : Binding}} {{r : Run.{m}.Req}} (he : envOf? j = some env)
     (hb : s.shell.bindings p = some b) (hd : env.domain? = some .{d}) (hx : Domain.{d} ∈ b.exposed)
     (hr : Run.{m}.decode j = .ok r) :
-    let cx := Ctx.ofBinding p b (s.inst b.window)
+    let cx := Ctx.ofBinding p b (s.inst b.window) (s.names b.window)
     step h cfg s (.message p j) =
       ({{ s with {f} := (Run.{m}.handle h (world s) cx s.{f} r).1 }},
        (Run.{m}.handle h (world s) cx s.{f} r).2.map ofEff) := by

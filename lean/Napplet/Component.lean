@@ -37,17 +37,23 @@ structure Ctx where
   exposed : List Domain
   /-- Host-chosen stable instance identifier (NAP-STORAGE §Instance Scope). -/
   inst : Nat
+  /-- The NAP-INC endpoint identifier the shell's policy assigns to this window, if any
+  (`Runtime.Config.endpointName`); otherwise `endpoint-<window>`. -/
+  endpoint : Option String := none
   deriving DecidableEq, Repr
 
 namespace Ctx
 
 /-- The single derivation of an endpoint context from a shell binding. -/
-def ofBinding (p : PortId) (b : Binding) (inst : Nat) : Ctx :=
-  { port := p, window := b.window, identity := b.identity, exposed := b.exposed, inst }
+def ofBinding (p : PortId) (b : Binding) (inst : Nat) (endpoint : Option String := none) : Ctx :=
+  { port := p, window := b.window, identity := b.identity, exposed := b.exposed, inst, endpoint }
 
-/-- NAP-INC endpoint identifier: opaque, unique per live endpoint, never reused in
-a runtime session (window ids are never reused, modelling decision 4). -/
-def endpointId (c : Ctx) : String := "endpoint-" ++ toString c.window
+/-- NAP-INC endpoint identifier: opaque, unique per live endpoint, never reused in a
+runtime session. NAP-INC: "Identifier encoding is runtime policy." The default is
+`endpoint-<window>` (window ids are never reused, modelling decision 4); a shell may
+name windows instead through `Runtime.Config.endpointName`, whose contract is to be
+injective and never to produce a default-form name. -/
+def endpointId (c : Ctx) : String := c.endpoint.getD ("endpoint-" ++ toString c.window)
 
 /-- NAP-INTENT catalog identifier of the napplet behind this endpoint. -/
 def catalogId (c : Ctx) : String := c.identity.catalogId

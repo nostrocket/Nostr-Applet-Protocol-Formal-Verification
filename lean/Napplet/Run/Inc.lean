@@ -75,6 +75,9 @@ structure Cfg where
   openAllowed : String → String → Bool := fun _ _ => true
   /-- Maximum concurrent channels per endpoint (kehto `MAX_CHANNELS_PER_WINDOW`). -/
   maxChannels : Nat := 32
+  /-- Channel id encoding ("shell-assigned opaque"): the shell's own name for its `n`-th
+  channel, if any; otherwise `c-<n>`. Contract: injective, and never a default-form name. -/
+  channelName : Nat → Option String := fun _ => none
 
 /-- An open channel: opener `a`, target `b`, each with the endpoint id bound at open. -/
 structure Channel where
@@ -219,7 +222,7 @@ def closedJson (ch : String) (reason : Option String) : Json :=
 /-! ### Component -/
 
 /-- Shell-assigned opaque channel id. -/
-def chanName (n : Nat) : String := "c-" ++ toString n
+def chanName (c : Cfg) (n : Nat) : String := (c.channelName n).getD ("c-" ++ toString n)
 
 /-- Channels endpoint `p` is a member of. -/
 def count (s : St) (p : PortId) : Nat := (s.channels.filter (·.has p)).length
@@ -235,7 +238,7 @@ def openCh (w : World) (cx : Ctx) (s : St) (id tgt : String) : St × List Eff :=
     else if s.cfg.maxChannels ≤ count s cx.port ∨ s.cfg.maxChannels ≤ count s t.port then
       (s, [.send cx.port (openErr id "channel limit reached")])
     else
-      let ch := chanName s.next
+      let ch := chanName s.cfg s.next
       ({ s with channels := s.channels ++ [⟨ch, cx.port, cx.endpointId, t.port, t.endpointId⟩],
                 next := s.next + 1 },
        [.send t.port (openedJson ch cx.endpointId), .send cx.port (openOk id ch t.endpointId)])
@@ -436,8 +439,8 @@ theorem open_ok (h : Host) (w : World) (cx : Ctx) (s : St) (id tgt : String) (t 
     (hacl : s.cfg.openAllowed cx.catalogId t.catalogId = true)
     (hl1 : count s cx.port < s.cfg.maxChannels) (hl2 : count s t.port < s.cfg.maxChannels) :
     (handle h w cx s (.chOpen id tgt)).2 =
-      [.send t.port (openedJson (chanName s.next) cx.endpointId),
-       .send cx.port (openOk id (chanName s.next) t.endpointId)] := by
+      [.send t.port (openedJson (chanName s.cfg s.next) cx.endpointId),
+       .send cx.port (openOk id (chanName s.cfg s.next) t.endpointId)] := by
   simp [handle, openCh, ht, hne, hinc, hacl, Nat.not_le.mpr hl1, Nat.not_le.mpr hl2]
 
 /-- Every open either fails, changing nothing and answering the opener with an
@@ -447,8 +450,8 @@ theorem open_cases (h : Host) (w : World) (cx : Ctx) (s : St) (id tgt : String) 
     (∃ err, handle h w cx s (.chOpen id tgt) = (s, [.send cx.port (openErr id err)])) ∨
     (∃ t ∈ w.live, t.endpointId = tgt ∧ t.port ≠ cx.port ∧ Domain.inc ∈ t.exposed ∧
       (handle h w cx s (.chOpen id tgt)).2 =
-        [.send t.port (openedJson (chanName s.next) cx.endpointId),
-         .send cx.port (openOk id (chanName s.next) t.endpointId)]) := by
+        [.send t.port (openedJson (chanName s.cfg s.next) cx.endpointId),
+         .send cx.port (openOk id (chanName s.cfg s.next) t.endpointId)]) := by
   simp only [handle, openCh]
   split
   · exact .inl ⟨_, rfl⟩
