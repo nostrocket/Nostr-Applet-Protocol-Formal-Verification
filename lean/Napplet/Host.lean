@@ -43,10 +43,21 @@ and the browser.
   non-decreasing). The host sends it whenever its clock has advanced before
   feeding another input. Timeouts are host calls that fail with a timeout reply;
   the runtime does not count time itself.
-* **Persistence.** The runtime state (`RtState`) is the durable state. Fields
-  documented as persistent (NAP-STORAGE values, NAP-CONFIG values and schemas,
-  user preferences such as intent defaults) MUST survive reloads; the host
-  stores them. Everything keyed by port or window is per session.
+* **Persistence.** Exactly the fields of `Persist.Persisted` are durable and MUST
+  survive reloads: NAP-STORAGE values (per scope), NAP-CONFIG registered schemas
+  (raw schema and version, per scope) and values (per scope), NAP-INTENT default
+  handlers (per archetype), NAP-LINK rules (per manifest key), NAP-UPLOAD consent
+  (per manifest key), and the remaining balances of NAP-VALUE and NAP-CVM
+  allowances. The host keeps `Persist.persist s` (JSON: `Persist.encPersisted`) and
+  writes it after every step that changes it, before applying that step's outputs,
+  so a crash never loses an acknowledged write or re-spends an allowance. Restore
+  entry point: on start-up the host decodes its record (`Persist.decPersisted`),
+  checks it (`Persisted.check`), and starts from `Persist.restore cfg names p` (the
+  finite state, `RtState.restore cfg p` in the model) instead of `RtState.init`.
+  A restored state has no frame, binding, grant, port or per-endpoint state
+  (`Persist.restore_clean`); the host then re-sends the theme, the user and NAP host
+  events (catalog, display devices) as at first start. Everything keyed by a port or
+  window, pending calls, subscriptions and identifier counters are per session.
 * **Tags.** A tag (`CallTag`) is unique among the calls the runtime has outstanding.
   The host echoes it unchanged and never invents one.
 * **Loading a napplet.** Before `Input.create w m bytes inst` the host resolves the
