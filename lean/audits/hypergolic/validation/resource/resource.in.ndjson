@@ -1,0 +1,27 @@
+{"config":{"display":{"devices":[{"id":"desk","width":800,"height":480,"type":"eink"}],"permitted":{"default":true}},"upload":{"rails":[{"rail":"nip96","server":"https://files.example.com/api/v2/media","returns":["https"]},{"rail":"blossom","server":"https://blossom.example.com","returns":["https","blossom"]}],"defaultRail":"nip96","maxBytes":104857600,"mimeTypes":["image/png","image/jpeg","application/pdf"]}},"host":{"hash":"test","sniff":"test"}}
+{"t":"create","w":1,"manifest":{"kind":35129,"pubkey":"0000000000000000000000000000000000000000000000000000000000000abc","content":"test napplet","tags":[["d","my-napplet"],["x","00000000000000000000000000000000000000000000000000000000000fbb62"]],"id":"0000000000000000000000000000000000000000000000000000000000000011"},"bytes":"bXktbmFwcGxldA==","inst":1}
+{"t":"load","w":1}
+{"t":"hello","w":1,"ports":[7]}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "dup", "url": "https://assets.public.org/a"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "dup", "url": "https://assets.public.org/a"}}
+{"t": "reply", "tag": {"domain": "resource", "n": 0}, "reply": {"t": "fetched", "outcome": {"hops": [{"v4": [93, 184, 216, 34]}], "body": "aGVsbG8=", "timedOut": false, "upstreamType": ""}}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "dup", "url": "https://assets.public.org/b"}}
+{"t": "reply", "tag": {"domain": "resource", "n": 1}, "reply": {"t": "fetched", "outcome": {"hops": [{"v4": [93, 184, 216, 34]}], "body": "aGVsbG8=", "timedOut": false, "upstreamType": ""}}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytesMany", "id": "n", "urls": ["nostr:npub1424242424242424242424242424242424242424242424242424qamrcaj", "nostr:note1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwashyvgwq", "nostr:nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5"]}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytesMany", "id": "d", "urls": ["data:;base64,aGk%3D", "data:nocomma", "data:,%00%01", "data:;base64,AA%3D%3D"]}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "o", "url": "data:,hi", "opts": {}}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytesMany", "id": "e", "urls": ["data:,hi", ""]}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "url": "data:,hi"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytesMany", "id": "s", "urls": ["http://assets.public.org/a", "hashtree:nhash1qqqq", "htree://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/t", "nhash1qqqq"]}}
+{"t": "message", "port": 7, "msg": {"type": "resource.info", "id": "i"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c1", "url": "https://assets.public.org/1"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c2", "url": "https://assets.public.org/2"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c3", "url": "https://assets.public.org/3"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c4", "url": "https://assets.public.org/4"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c5", "url": "https://assets.public.org/5"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c6", "url": "https://assets.public.org/6"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c7", "url": "https://assets.public.org/7"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c8", "url": "https://assets.public.org/8"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c9", "url": "https://assets.public.org/9"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c10", "url": "https://assets.public.org/10"}}
+{"t": "message", "port": 7, "msg": {"type": "resource.bytes", "id": "c11", "url": "https://assets.public.org/11"}}

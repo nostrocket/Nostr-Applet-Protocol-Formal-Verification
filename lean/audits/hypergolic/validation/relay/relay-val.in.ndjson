@@ -1,0 +1,30 @@
+{"config":{"display":{"devices":[{"id":"desk","width":800,"height":480,"type":"eink"}],"permitted":{"default":true}},"upload":{"rails":[{"rail":"nip96","server":"https://files.example.com/api/v2/media","returns":["https"]},{"rail":"blossom","server":"https://blossom.example.com","returns":["https","blossom"]}],"defaultRail":"nip96","maxBytes":104857600,"mimeTypes":["image/png","image/jpeg","application/pdf"]}},"host":{"hash":"test","sniff":"test"}}
+{"t":"create","w":1,"manifest":{"kind":35129,"pubkey":"0000000000000000000000000000000000000000000000000000000000000abc","content":"test napplet","tags":[["d","my-napplet"],["x","00000000000000000000000000000000000000000000000000000000000fbb62"]],"id":"0000000000000000000000000000000000000000000000000000000000000011"},"bytes":"bXktbmFwcGxldA==","inst":1}
+{"t":"load","w":1}
+{"t":"hello","w":1,"ports":[7]}
+{"t":"event","event":{"t":"userChanged","pubkey":"def..."}}
+{"t":"message","port":7,"msg":{"type":"relay.publishEncrypted","id":"p1","event":{"kind":1,"content":"hi","tags":[],"created_at":1},"recipient":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":"a1","subId":"A","filters":[{"kinds":[1]}]}}
+{"t":"message","port":7,"msg":{"type":"relay.close","id":"c1","subId":"A"}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":"b1","subId":"B","filters":[{"kinds":[1]}]}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":"b2","subId":"B","filters":[{"kinds":[7]}]}}
+{"t":"reply","tag":{"domain":"relay","n":2},"reply":{"t":"event","event":{"id":"old","pubkey":"def...","created_at":1,"kind":1,"tags":[],"content":"from old B","sig":"s"},"relay":"wss://relay.example.com"}}
+{"t":"reply","tag":{"domain":"relay","n":3},"reply":{"t":"event","event":{"id":"new","pubkey":"def...","created_at":1,"kind":7,"tags":[],"content":"from new B","sig":"s"},"relay":"wss://relay.example.com"}}
+{"t":"message","port":7,"msg":{"type":"outbox.subscribe","id":"o1","subId":"OS","filters":[{"authors":["def..."],"kinds":[1]}]}}
+{"t":"message","port":7,"msg":{"type":"outbox.close","id":"o2","subId":"OS"}}
+{"t":"message","port":7,"msg":{"type":"relay.publish","id":"t1","event":{"kind":1,"content":"hi","tags":[]}}}
+{"t":"message","port":7,"msg":{"type":"relay.publish","id":"t2","event":{"kind":1,"content":"hi","tags":[],"created_at":1,"extra":true}}}
+{"t":"message","port":7,"msg":{"type":"relay.publish","id":"t3"}}
+{"t":"message","port":7,"msg":{"type":"relay.query","id":"q1","filters":"nope"}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":"s1","subId":"x","filters":"nope"}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":5,"subId":"y","filters":[{}]}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":"s3","subId":"z","filters":[{"kinds":[1]}],"relay":"wss://10.0.0.1"}}
+{"t":"message","port":7,"msg":{"type":"relay.subscribe","id":"s4","subId":"w","filters":[{"kinds":[1]}],"relay":"ws://relay.example.com"}}
+{"t":"message","port":7,"msg":{"type":"relay.publish","id":"t4","event":{"kind":1,"content":"hi","tags":[],"created_at":1,"pubkey":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}
+{"t":"message","port":7,"msg":{"type":"relay.query","id":"q2","filters":[{"kinds":[1]}]}}
+{"t":"reply","tag":{"domain":"relay","n":7},"reply":{"t":"event","event":{"id":"qe","pubkey":"def...","created_at":1,"kind":1,"tags":[],"content":"q","sig":"s"},"relay":"wss://relay.example.com"}}
+{"t":"reply","tag":{"domain":"relay","n":7},"reply":{"t":"eose"}}
+{"t":"message","port":7,"msg":{"type":"outbox.resolveRelays","id":"r1","authors":"nope"}}
+{"t":"message","port":7,"msg":{"type":"outbox.resolveRelays","id":"r2"}}
+{"t":"message","port":7,"msg":{"type":"outbox.publish","id":"op1","event":{"kind":1,"content":"hi","tags":[]},"options":{"toOutbox":false,"relays":["wss://relay.example.com"]}}}
+{"t":"message","port":7,"msg":{"type":"relay.close","id":"c9","subId":"never-opened"}}
