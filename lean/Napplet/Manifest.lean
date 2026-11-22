@@ -396,4 +396,55 @@ theorem checkManifest_dTag {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
       rw [dValue?_not_named (by decide) hd] at hs
       simp at hs
 
+/-! ### Verification without the artifact (NAP-SHELL `check`, PR #142)
+
+`shell.check` assesses a target manifest "using the same capability and policy rules
+used when loading that target" but "MUST NOT fetch artifacts". `checkManifestEvent`
+runs every rule of `checkManifest` except the hash comparison, taking the signed `x`
+value as the artifact hash; the load-time comparison `sha256(bytes) = x` still
+happens at load. `checkManifestEvent_agrees`: whenever the load check accepts some
+bytes, this check accepts the same manifest with the same result. -/
+
+def checkManifestEvent (c : Crypto) (m : ManifestEvent) : Except ManifestError VerifiedManifest :=
+  match xValue? m with
+  | some x => checkManifest { c with sha256 := fun _ => x } m []
+  | none => checkManifest c m []
+
+/-- Replacing the hash function by the constant hash of the held bytes changes nothing. -/
+theorem checkManifest_sha_const (c : Crypto) (m : ManifestEvent) (b b' : Bytes) :
+    checkManifest { c with sha256 := fun _ => c.sha256 b } m b' = checkManifest c m b := rfl
+
+theorem checkManifestEvent_agrees {c : Crypto} {m : ManifestEvent} {bytes : Bytes}
+    {v : VerifiedManifest} (h : checkManifest c m bytes = .ok v) : checkManifestEvent c m = .ok v := by
+  have hx := (checkManifest_ok h).2.2.1
+  simp only [checkManifestEvent, hx]
+  rw [checkManifest_sha_const]; exact h
+
+/-- What the check guarantees: a valid signature, and an identity whose artifact hash is
+the signed `x` value (so load accepts exactly the bytes hashing to it). -/
+theorem checkManifestEvent_ok {c : Crypto} {m : ManifestEvent} {v : VerifiedManifest}
+    (h : checkManifestEvent c m = .ok v) :
+    c.verifySig m = true ∧ xValue? m = some v.identity.artifactHash := by
+  unfold checkManifestEvent at h
+  split at h
+  · rename_i x hx
+    have k := checkManifest_ok h
+    refine ⟨k.1, ?_⟩
+    rw [hx, k.2.2.2.1]
+  · rename_i hx
+    have k := (checkManifest_ok h).2.2.1
+    rw [hx] at k; cases k
+
+/-- Without a valid signature the check fails. -/
+theorem checkManifestEvent_sig {c : Crypto} {m : ManifestEvent} (h : c.verifySig m = false) :
+    ∀ v, checkManifestEvent c m ≠ .ok v := by
+  intro v hv
+  have := (checkManifestEvent_ok hv).1
+  rw [h] at this; cases this
+
+/-- A crypto whose signature check is already known to pass. -/
+theorem checkManifest_sig_true {c : Crypto} {m : ManifestEvent} (hv : c.verifySig m = true)
+    (b : Bytes) : checkManifest { c with verifySig := fun _ => true } m b = checkManifest c m b := by
+  simp only [checkManifest, hv]
+
 end Napplet

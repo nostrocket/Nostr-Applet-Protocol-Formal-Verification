@@ -72,18 +72,18 @@ before handoff are ignored.
 | 54 | Icon: "The hash MUST be the 64-character lowercase-hex sha256 ... The MIME type MUST be `image/png`, `image/jpeg`, or `image/webp`" | MUST | OK | `Manifest.lean:82,188-191` |
 | 55 | "Clients displaying the icon MUST fetch the blob by its hash from the ... `server` origins and verify ... MUST also verify that the bytes decode ... MUST render the verified bytes" | MUST | HOST | `Host.lean:69-74` |
 | 56 | Bad icon "MUST fall back to generic artwork and MUST NOT prevent loading the napplet" | MUST | OK + HOST | Icon outside `checkManifest` (`Manifest.lean:244-268`); fallback `Host.lean:73-74` |
-| 57 | "`z` or `i` tag MUST NOT widen what the shell exposes" | MUST NOT | OK | `Capability.lean:33` `exposedFor` (policy only); theorem `exposure_ignores_declarations` (46) |
-| 58 | `R` check: "if one is absent it SHOULD reject the napplet or warn" | SHOULD | OK | `Shell.lean:104-112` `admit`, `Capability.lean:30` `strictRequired` (default reject), `missingRequired` (53); unknown names count as missing (decision 5) |
+| 57 | "`z` or `i` tag MUST NOT widen what the shell exposes" | MUST NOT | OK | `Capability.lean:38` `exposedFor` (policy only); theorem `exposure_ignores_declarations` (51) |
+| 58 | `R` check: "if one is absent it SHOULD reject the napplet or warn" | SHOULD | OK | `Shell.lean:104-112` `admit`, `Capability.lean:30` `strictRequired` (default reject), `missingRequired` (58); unknown names count as missing (decision 5) |
 | 59 | "Missing `O` domains MUST NOT by themselves prevent loading" | MUST NOT | OK | `admit` never reads `optional` (`Shell.lean:104-112`) |
-| 60 | "`R` and `O` ... MUST NOT widen what the shell exposes" | MUST NOT | OK | `Capability.lean:33,46` |
-| 61 | "Clients MUST inspect the complete `R` set locally; `&R` is only a targeted discovery optimization" | MUST | OK | `missingRequired` over all `R` (`Capability.lean:53`); theorems `andFilter_is_not_compatibility` (87), `andFilter_admits_incompatible` (95) |
+| 60 | "`R` and `O` ... MUST NOT widen what the shell exposes" | MUST NOT | OK | `Capability.lean:38,51` |
+| 61 | "Clients MUST inspect the complete `R` set locally; `&R` is only a targeted discovery optimization" | MUST | OK | `missingRequired` over all `R` (`Capability.lean:58`); theorems `andFilter_is_not_compatibility` (92), `andFilter_admits_incompatible` (100) |
 | 62 | HTML metadata: "Publishing tools SHOULD preserve descriptive metadata"; "Icon links SHOULD use data URLs"; "Publishers MUST finalize embedded metadata before computing `x`" | SHOULD / MUST | NAPPLET | Publisher obligations; not modelled |
 | 63 | "runtimes MUST NOT require this metadata or let it override the signed manifest or runtime domain availability" | MUST NOT | OK | The model never reads the artifact's HTML metadata (`checkManifest` reads only the event) |
 | 64 | "If it is absent, the napplet MUST gracefully degrade or stop using that domain" | MUST | NAPPLET | Napplet behaviour; shell side: unexposed domains are dropped (`Shell.lean:158`) |
 | 65 | "If a domain needs semantic compatibility checks ... that domain MUST define them in its own NAP" | MUST | N/A | Binds NAP authors |
-| 66 | "A shell MAY advertise itself with a NIP-89 handler information event"; "the shell SHOULD provide at least one" `web` tag | MAY / SHOULD | OPTIONAL (not listed) | Handler publication is not modelled; only the `R ⊆ N` test is (`Capability.lean:73`). README does not list it |
-| 67 | "Clients served by the `#N` fallback MUST still check the complete `R` set against the shell's `N` set locally" | MUST | OK | `Capability.lean:73` `compatible`, theorem `compatible_iff` (76) |
-| 68 | "A handler event MUST NOT widen what a shell exposes, nor substitute for the load-time check of a manifest's `R` set" | MUST NOT | OK | `exposedFor`/`admit` never read `N` (`Capability.lean:33`, `Shell.lean:104`) |
+| 66 | "A shell MAY advertise itself with a NIP-89 handler information event"; "the shell SHOULD provide at least one" `web` tag | MAY / SHOULD | OPTIONAL (not listed) | Handler publication is not modelled; only the `R ⊆ N` test is (`Capability.lean:78`). README does not list it |
+| 67 | "Clients served by the `#N` fallback MUST still check the complete `R` set against the shell's `N` set locally" | MUST | OK | `Capability.lean:78` `compatible`, theorem `compatible_iff` (81) |
+| 68 | "A handler event MUST NOT widen what a shell exposes, nor substitute for the load-time check of a manifest's `R` set" | MUST NOT | OK | `exposedFor`/`admit` never read `N` (`Capability.lean:38`, `Shell.lean:104`) |
 | 69 | "a missing or malformed one MUST NOT prevent playback in a shell the user has already opened" | MUST NOT | OK | Handler events play no part in `Runtime.step` |
 | 70 | NAP specs MUST define types, payloads, behaviour; "a shell MAY support any subset of NAPs" | MUST / MAY | N/A (MAY: OK) | Subsets: `ShellConfig.supported` (`Capability.lean:26`) |
 | 71 | Security 1: "shells MUST NOT add `allow-same-origin`" | MUST NOT | HOST | `Host.lean:57` |

@@ -10,7 +10,10 @@ import Napplet.Nap.Identity
 /-!
 # NAP-IDENTITY runtime component
 
-Upstream: `napplet/naps` `master`, `naps/NAP-IDENTITY.md` at `377bf939`.
+Upstream: `napplet/naps` `master`, `naps/NAP-IDENTITY.md` at `377bf939`, with PR #155
+(`nap-identity` at `c13e8891`): `identity.getProfile.result.profile` is required and
+nullable, a `ProfileData` object or `null` "when no profile is found or when `error`
+is set".
 
 Wire (napplet → shell, each `{id}` plus `listType` for `getList`):
 `identity.getPublicKey`, `getRelays`, `getProfile`, `getFollows`, `getList`,
@@ -118,11 +121,13 @@ def typeOk : Json → Json → Bool
 /-- Build `<type>.result` from the host's answer. -/
 def resultJson (r : Req) (answer : Json) : Json :=
   let (f, d) := primary r
-  let v := match answer.get? f with
+  let err := answer.getStr? "error"
+  let v := if err.isSome then d else
+    match answer.get? f with
     | some x => if typeOk d x then x else d
     | none => d
   Json.msg (resultType (typeOf r))
-    [("id", some (.str r.id)), (f, some v), ("error", (answer.getStr? "error").map .str)]
+    [("id", some (.str r.id)), (f, some v), ("error", err.map .str)]
 
 def pubkeyResult (id pk : String) : Json :=
   Json.msg "identity.getPublicKey.result" [("id", some (.str id)), ("pubkey", some (.str pk))]
@@ -236,9 +241,23 @@ theorem onEvent_mentions (h : Host) (w : World) (s : St) (e : HostEvent) (q : Po
   apply Or.inl
   cases e <;> simpa [onEvent] using hm
 
+/-- PR #155: every `identity.getProfile.result` carries `profile`, and it is `null`
+whenever `error` is set. -/
+theorem profile_present (id : String) (a : Json) :
+    ((resultJson (.getProfile id) a).get? "profile").isSome ∧
+    ((a.getStr? "error").isSome → (resultJson (.getProfile id) a).get? "profile" = some .null) := by
+  cases he : a.getStr? "error" <;>
+    simp [resultJson, primary, he, Json.msg, Json.mkObj, Json.get?, Json.lookup]
+
 #guard decode (Json.parse! "{ \"type\": \"identity.getList\", \"id\": \"q6\", \"listType\": \"bookmarks\" }") matches .ok (.getList "q6" "bookmarks")
 #guard decode (Json.parse! "{ \"type\": \"identity.sign\", \"id\": \"q6\" }") matches .unknown
 #guard Json.same (resultJson (.getFollows "q10") (Json.parse! "{\"error\": \"relay timeout\"}"))
   (Json.parse! "{ \"type\": \"identity.getFollows.result\", \"id\": \"q10\", \"pubkeys\": [], \"error\": \"relay timeout\" }")
+-- PR #155: `profile` is always present, and `null` when `error` is set, even if the host
+-- also returned a profile object
+#guard Json.same (resultJson (.getProfile "q3") (Json.parse! "{\"profile\": {\"name\": \"x\"}, \"error\": \"relay timeout\"}"))
+  (Json.parse! "{ \"type\": \"identity.getProfile.result\", \"id\": \"q3\", \"profile\": null, \"error\": \"relay timeout\" }")
+#guard Json.same (resultJson (.getProfile "q3") (Json.parse! "{}"))
+  (Json.parse! "{ \"type\": \"identity.getProfile.result\", \"id\": \"q3\", \"profile\": null }")
 
 end Napplet.Run.Identity

@@ -269,7 +269,9 @@ component's `Cfg`, every field with a default taken from the upstream recommenda
 
 ### SHELL, THEME, STORAGE
 
-No NAP-specific operations. SHELL reports `Host.services`. THEME reads
+No NAP-specific operations. SHELL reports `Host.services`, and its `shell.check` (PR
+#142) uses only `Host.verifyEvent` on the target manifest and the shell's own policy
+(`ShellConfig`, with `ShellConfig.undisclosed` for availability it will not disclose). THEME reads
 `HostEvent.themeChanged` (a NAP-THEME `Theme` JSON object; one without all three
 colours is ignored). STORAGE's store is persistent runtime state.
 
@@ -284,7 +286,8 @@ colours is ignored). STORAGE's store is persistent runtime state.
   9735 receipts, `badges` from NIP-58) and optionally `error` (`"relay timeout"`,
   `"not found"`, `"unsupported list type"`). The host MAY redact or empty sensitive
   lists. `identity.getPublicKey` never reaches the host: it is answered from the
-  runtime's user (`HostEvent.userChanged`).
+  runtime's user (`HostEvent.userChanged`). A reply carrying `error` yields the primary
+  field's default (`profile: null`, PR #155) whatever else it holds.
 
 ### CONFIG (`Napplet/Run/Config.lean`)
 
@@ -417,6 +420,37 @@ asynchronous is in `Cfg` (`subscribeAllowed`, `openAllowed`, `maxChannels`).
   explicitly (NAP-INTENT: "MUST NOT let a caller address a handler instance unless the
   user explicitly authorized that handler"). The host may answer from a rule the user
   configured. `allowed = false` yields `"invoke rejected"`.
+
+* `Call.prompt .intent "launch" {"sender": text, "handler": text, "address": text,
+  "installed": bool, "relays"?: [text]}` → `Reply.decision allowed _` (PR #148, with
+  `Cfg.confirmLaunch`). Ask the user whether to open (or, when `installed` is false, to
+  review installing) the napplet `handler` that the source `sender` named ("opening
+  SHOULD require a user gesture or confirmation under policy"). The host may answer from
+  a recent user gesture or a rule the user configured, and SHOULD refuse launches beyond
+  a rate limit ("The runtime SHOULD rate-limit launches"). `allowed = false` yields
+  `"user cancelled"`.
+* `Effect.nap .intent "open" {"handler": text, "behavior"?: {"focus"?, "reuse"?}}` (PR
+  #148): open or focus the installed napplet whose catalog id is `handler`, through the
+  ordinary NIP-5D load when it is not running, honouring `behavior` as hints. It gets
+  only its own manifest's capabilities under shell policy and nothing about the source
+  ("`launch` grants nothing"). A failure is post-acceptance and not reported.
+* `Effect.nap .intent "install" {"handler": text, "address": text, "relays"?: [text],
+  "behavior"?: {...}}` (PR #148, `Cfg.absent = .offerInstall`): resolve the signed
+  manifest for `address` from relays (the hints are untrusted and MUST NOT bypass the
+  shell's network policy), verify its signature and that its coordinate is exactly
+  `address`, apply the ordinary installation, artifact verification and execution rules,
+  and install only after the user confirms in the install review; then it MAY open the
+  napplet. A declined or failed installation is not reported to the source. The
+  installed manifest reaches the catalog through the ordinary `catalog` event.
+* `HostEvent.nap .intent "replay" {"window": number, "archetype": text, "action": text,
+  "convention": text, "payload"?: any}` (PR #128): replay to the instance in `window`
+  an invocation that instance itself produced (for example a location it reported under
+  another domain's contract, as in the NAP-NAVIGATION proposal). Contract: only user
+  action or shell policy causes it; the content is that target's own, never authored by
+  the shell; `window` is the shell's own selection, not a catalog id.
+* `Effect.nap .intent "replayFailed" {"window": number}` (PR #128): the selected
+  instance is gone, does not have `intent` exposed, or does not advertise the
+  convention; nothing was delivered and no other instance will be tried.
 
 A prompt reply other than `decision` counts as a refusal / cancellation. Prompts of a
 torn-down source are cancelled with `Effect.cancel`.

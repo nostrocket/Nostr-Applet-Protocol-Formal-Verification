@@ -133,6 +133,15 @@ def handlerHint? (frag : String) : Option (String × List String) := do
   guard (a.kind = 35129 && !a.d.isEmpty)
   some ("35129:" ++ a.pubkey ++ ":" ++ a.d, a.relays)
 
+/-- PR #148 web binding: `intent.launch(naddr)` decodes into `target.address` and
+`target.relays`, and "MUST reject an `naddr` that is not a kind `35129` or `15129`
+napplet coordinate" (35129 with a non-empty `d`, 15129 with an empty `d`, as
+`IntentTarget` requires). -/
+def launchTarget? (s : String) : Option (String × List String) := do
+  let a ← decodeNaddr s
+  guard ((a.kind = 35129 && !a.d.isEmpty) || (a.kind = 15129 && a.d.isEmpty))
+  some (toString a.kind ++ ":" ++ a.pubkey ++ ":" ++ a.d, a.relays)
+
 /-! ### Vectors -/
 
 -- BIP-173 valid test vectors
@@ -149,6 +158,13 @@ def sample : Naddr := { kind := 35129, pubkey := String.join (author.map hexByte
 #guard handlerHint? (encodeNaddr sample author) ==
   some ("35129:" ++ sample.pubkey ++ ":my-napplet", ["wss://relay.example.com"])
 #guard handlerHint? (encodeNaddr { sample with kind := 15129 } author) == none
+#guard launchTarget? (encodeNaddr sample author) ==
+  some ("35129:" ++ sample.pubkey ++ ":my-napplet", ["wss://relay.example.com"])
+#guard launchTarget? (encodeNaddr { sample with kind := 15129, d := "", relays := [] } author) ==
+  some ("15129:" ++ sample.pubkey ++ ":", [])
+#guard launchTarget? (encodeNaddr { sample with kind := 15129 } author) == none
+#guard launchTarget? (encodeNaddr { sample with kind := 5129, d := "" } author) == none
+#guard launchTarget? (encodeNaddr { sample with kind := 30023 } author) == none
 -- a flipped character breaks the checksum
 def flipLast (s : String) : String :=
   let cs := s.toList

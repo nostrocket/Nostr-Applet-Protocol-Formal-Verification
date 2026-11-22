@@ -9,7 +9,7 @@ and the CONFIG paragraph).
 
 | # | Upstream statement (short quote) | Level | Status | Lean |
 |---|---|---|---|---|
-| 1 | Depends: "the runtime MAY persist configuration through storage internally" | MAY | OK | `St.schemas`/`St.values` are their own persistent state (Host.lean:293-294) |
+| 1 | Depends: "the runtime MAY persist configuration through storage internally" | MAY | OK | `St.schemas`/`St.values` are their own persistent state (Host.lean:296-297) |
 | 2 | "callers MUST register a schema before requesting values" | MUST | NAPPLET | Shell answers `no-schema` otherwise (#36) |
 | 3 | `subscribe`: "The shell MUST deliver an immediate initial `config.values` push on subscription" | MUST | RESOLVED (was MISMATCH) (uncovered conflict) | `handle .subscribe` :602 → `deliver` :568. With a schema whose root `required` property has no persisted value and no default, `snapshot` is `none` and the shell pushes `config.schemaError {code:"invalid-schema"}` instead of values. Checked: the root schema `required:["a"]` with `a` a string and no default gives schemaError. Upstream conflicts here with "Every `config.values` ... MUST contain only values that validate". The model's choice is reasonable but is not a README decision. See C1 |
 | 4 | "The reference shim implementation SHOULD ref-count local subscribers" | SHOULD | NAPPLET | Not modelled in `Binding`/`BindingApi` |
@@ -24,7 +24,7 @@ and the CONFIG paragraph).
 | 13 | "`config.subscribe` MUST produce an immediate initial `config.values` push before any value-change pushes" | MUST | OK / RESOLVED (was MISMATCH) | Ordering is OK: the push is sent in the subscribe step, before any later `edited`. Missing values: see #3 / C1 |
 | 14 | `config.unsubscribe`: "iframe unmount also implicitly unsubscribes" | (normative) | OK | `drop` :640; theorem `drop_clears` :915 |
 | 15 | "Shells and napplets MUST agree on a bounded subset" | MUST | OK | `allowedKeys` :330, `keyError` :341, `decodeNode` :421 |
-| 16 | "Every conformant shell MUST accept and render schemas that use only the types, keywords, and constraints enumerated below" | MUST | RESOLVED (was MISMATCH) (partial) | `decodeNode` :421 / `leafOf` :397 reject some schemas built only from Core keywords: `enum` on `array` (`"enum does not apply to type array"`), `minimum`/`maximum` on non-numeric and `minLength`/`maxLength` on non-string types (`absent` checks :399-402), and a schema-valued `additionalProperties` (:445-447). All checked. See C3. Rendering: HOST (Host.lean:274-284) |
+| 16 | "Every conformant shell MUST accept and render schemas that use only the types, keywords, and constraints enumerated below" | MUST | RESOLVED (was MISMATCH) (partial) | `decodeNode` :421 / `leafOf` :397 reject some schemas built only from Core keywords: `enum` on `array` (`"enum does not apply to type array"`), `minimum`/`maximum` on non-numeric and `minLength`/`maxLength` on non-string types (`absent` checks :399-402), and a schema-valued `additionalProperties` (:445-447). All checked. See C3. Rendering: HOST (Host.lean:276-286) |
 | 17 | "Napplets MUST NOT rely on any feature outside this subset" | MUST | NAPPLET | — |
 | 18 | "The schema root MUST be `{ "type": "object", "properties": { ... } }`" | MUST | OK | `rootCheck` :504 (`invalid-schema`, "schema root must be of type `object`"). A missing `properties` is accepted as an empty object |
 | 19 | Arrays homogeneous only; tuple `items` not in Core | (normative) | OK | `decodeNode` :465 (`invalid-schema`); vector :1086 |
@@ -34,14 +34,14 @@ and the CONFIG paragraph).
 | 23 | Default resolution: "the shell MUST resolve its value in the following order" (persisted-if-valid, own `default`, ancestor `default`, undefined) | MUST | OK | `Schema.resolve` :280 (`firstOk` over persisted ++ own ++ ancestors); theorems `default_resolution` :735, `own_default_first` :742, `Schema.resolve_valid` :657. Invalid candidates skipped: README decision 26 |
 | 24 | Potentialities: "Shells MAY act on them; shells MAY ignore them" | MAY | OK / HOST | Passed in the raw schema to the host |
 | 25 | "Shells that do not recognize an extension MUST treat it as opaque metadata and MUST NOT reject the schema on that basis" | MUST | OK | `keyError` :345 admits every `x-napplet-*` key; vector :1092 (`x-napplet-future: {}`) |
-| 26 | `x-napplet-secret` MAY mask / suppress logs / no default / keychain | MAY | HOST | Host.lean:282-284, :294 |
+| 26 | `x-napplet-secret` MAY mask / suppress logs / no default / keychain | MAY | HOST | Host.lean:284-286, :294 |
 | 27 | `$version`: "Shells MAY use `$version` ...; MAY ignore it" | MAY | DECISION | Non-decreasing check (`register` :536-540, `version-conflict`); README CONFIG paragraph. Migration is in README "Optional behaviours" |
 | 28 | "Napplets MUST NOT receive values that violate the currently-registered schema at `config.values` delivery time" | MUST | OK | `snapshot_valid` :757, `deliver_values` :778, `push_spec` :792, `handle_values_valid` :854; re-registration pushes the new snapshot (`handle` :600) |
 | 29 | Exclusions: `pattern`, `$ref` (all forms), `definitions`/`$defs`, `oneOf`/`anyOf`/`allOf`/`not`, `if`/`then`/`else`, `patternProperties`, `propertyNames`, `dependencies`, `dependentSchemas`, `unevaluatedProperties`, tuple arrays | (normative) | OK | `keyError` :341, `excludedKeys` :337, `decodeNode` :465; vectors :1083-1086, :1040 |
 | 30 | "Shells MAY support [combinators] as an Extended Subset, but napplets MUST NOT rely on them" | MAY / MUST | OK / NAPPLET | Not supported (rejected `invalid-schema`) |
 | 31 | Expression-valued defaults: "Napplets needing runtime-generated defaults MUST handle the `undefined` case" | MUST | NAPPLET | Defaults are literal JSON |
 | 32 | "Shells MUST reject any schema that declares both [`x-napplet-secret: true` and `default`] on the same property with `code: "secret-with-default"`" | MUST | RESOLVED (was MISMATCH) (partial) | String properties: OK (`decodeNode` :478-479, `checkTree` :488; vector :1087). Non-string properties: `decodeNode` :438, :461, :477 throw `invalid-schema` ("`x-napplet-secret` applies only to strings") first. Checked: `{type:"integer", x-napplet-secret:true, default:1}` gives `invalid-schema`. See C2 |
-| 33 | Format: "shells MAY use `format` to pick an input widget but MUST NOT reject a value solely because it fails the `format`" | MAY / MUST | OK | `Leaf.ok` :237 ignores `format`; Host.lean:280 ("`format` only as a widget hint") |
+| 33 | Format: "shells MAY use `format` to pick an input widget but MUST NOT reject a value solely because it fails the `format`" | MAY / MUST | OK | `Leaf.ok` :237 ignores `format`; Host.lean:282 ("`format` only as a widget hint") |
 | 34 | "Napplets requiring strict validation MUST use `enum`, `minLength`, ... NOT `format`" | MUST | NAPPLET | — |
 | 35 | "Shells MUST reject schemas nesting `object` properties more than 4 levels deep ... `schema-too-deep`" | MUST | OK | `decodeNode` fuel :422, `checkTree` :487; `register_accepts_only_core` :824; vector :1089. Counting the root as level 1 is the model's reading (upstream does not say whether the root counts) |
 | 36 | "Napplets MUST NOT assume arbitrary nesting is supported" | MUST | NAPPLET | — |
@@ -49,7 +49,7 @@ and the CONFIG paragraph).
 | 38 | MUST "Apply declared defaults" | MUST | OK | as #23 |
 | 39 | MUST "Use the verified identity scope ... A napplet cannot read or write outside its own scope" | MUST | OK | as #8-#11 |
 | 40 | MUST "Be the sole writer ... No napplet->shell wire message mutates persisted values" | MUST | OK | theorem `sole_writer` :900; values are written only by the host `edited` event (:618) and orphan pruning on registration; `config.set` is unknown (vector :1031) |
-| 41 | MUST "Mask `x-napplet-secret: true` fields (Tier 0): mask input, do NOT include the default, and do NOT deliver the property ... if never explicitly set" | MUST | OK + HOST | Not delivered unless persisted: `Schema.resolve` :282 (`if sec then p.filter l.ok`), theorem `Props.secret_unset` :715, vector :1099 (an ancestor default never supplies it). Masking, no default shown: Host.lean:282-283 |
+| 41 | MUST "Mask `x-napplet-secret: true` fields (Tier 0): mask input, do NOT include the default, and do NOT deliver the property ... if never explicitly set" | MUST | OK + HOST | Not delivered unless persisted: `Schema.resolve` :282 (`if sec then p.filter l.ok`), theorem `Props.secret_unset` :715, vector :1099 (an ancestor default never supplies it). Masking, no default shown: Host.lean:284-285 |
 | 42 | "napplets MUST NOT set `default` on such fields" | MUST | NAPPLET + OK | Shell rejects (#32) |
 | 43 | MUST "Reject schemas exceeding the depth limit" | MUST | OK | as #35 |
 | 44 | MUST "Reject schemas with forbidden features ... with `ok: false` and an appropriate code" | MUST | OK | as #29 (`ref-not-allowed`, `pattern-not-allowed`, `invalid-schema`) |
@@ -57,11 +57,11 @@ and the CONFIG paragraph).
 | 46 | MUST "`config.subscribe` MUST NOT deliver its first `config.values` until the most recent `config.registerSchema` from the same source has been fully applied" | MUST | OK | Registration is applied in the step that handles it (`handle` :597-600); atomic steps (Host.lean:39-41) |
 | 47 | "If subscribe arrives before any schema has been registered, shells MUST emit `config.schemaError` with `code: "no-schema"`" | MUST | OK | `deliver` :570; theorem `no_schema_error` :847 |
 | 48 | MUST "Drop orphaned properties ... MUST NOT be delivered. For secret properties, orphaned values MUST be deleted immediately on schema change" | MUST | OK | `pruneRoot` on every accepted registration (`handle` :599) deletes all orphans, secret or not, at every level (`Schema.prune` :305); `snapshot_declared` :761 |
-| 49 | SHOULD group by `x-napplet-section`, sort by `x-napplet-order`, surface `deprecationMessage`, render `markdownDescription` as markdown "Never render as HTML" | SHOULD | HOST | Host.lean:277-280 |
-| 50 | SHOULD "Coalesce rapid value changes" (~100 ms) | SHOULD | HOST | Host.lean:286 |
+| 49 | SHOULD group by `x-napplet-section`, sort by `x-napplet-order`, surface `deprecationMessage`, render `markdownDescription` as markdown "Never render as HTML" | SHOULD | HOST | Host.lean:279-282 |
+| 50 | SHOULD "Coalesce rapid value changes" (~100 ms) | SHOULD | HOST | Host.lean:288 |
 | 51 | SHOULD "Drop non-secret orphans after a grace period" | SHOULD | OK | Dropped immediately on schema change (stricter, allowed) |
-| 52 | SHOULD "Honor `config.openSettings` for focused napplets ... Rate-limit repeated requests" | SHOULD | HOST | Host.lean:281-282 |
-| 53 | MAY Tier 2+ secret handling | MAY | HOST | Host.lean:294 |
+| 52 | SHOULD "Honor `config.openSettings` for focused napplets ... Rate-limit repeated requests" | SHOULD | HOST | Host.lean:283-284 |
+| 53 | MAY Tier 2+ secret handling | MAY | HOST | Host.lean:297 |
 | 54 | MAY richer `format` widgets; "MUST NOT fail validation on `format` alone" | MAY / MUST | OK / HOST | as #33 |
 | 55 | MAY render nested objects beyond one level | MAY | HOST | raw schema to host |
 | 56 | MAY back storage with NAP-STORAGE | MAY | OK | not used |
@@ -70,8 +70,8 @@ and the CONFIG paragraph).
 | 59 | MAY emit `config.settingsOpened`; "Napplets MUST NOT rely on this message" | MAY / MUST | OPTIONAL / NAPPLET | README "Optional behaviours" |
 | 60 | Anti-features "MUST NOT appear in conformant implementations" (`config.set`, `$ref`, `pattern`, napplet-rendered settings, napplet validation code, `ui:widget`, migration code, cross-napplet sharing, streaming keystrokes, 2020-12 conditionals, keychain as MUST) | MUST NOT | OK | `config.set` unknown (vector :1031); `$ref`/`pattern`/conditionals/`$dynamicRef` rejected (`keyError`); `ui:widget` is outside the subset and rejected (`keyError` :346); settings UI is the host's (`openSettings` effect); no napplet code runs in the shell; isolation `handle_isolated`; commit-only writes (`edited`) |
 | 61 | Security: "NAP-CONFIG requests MUST NOT carry caller-selected identity or scope fields" | MUST | OK / NAPPLET | as #10 |
-| 62 | Cleartext secrets: "Implementers MUST be aware that ..." | MUST (informative) | HOST | Host.lean:283-284 |
-| 63 | "Shells SHOULD suppress console logging of `config.values` deliveries containing secret fields" | SHOULD | HOST | Host.lean:283-284 ("SHOULD keep their values out of logs") |
+| 62 | Cleartext secrets: "Implementers MUST be aware that ..." | MUST (informative) | HOST | Host.lean:285-286 |
+| 63 | "Shells SHOULD suppress console logging of `config.values` deliveries containing secret fields" | SHOULD | HOST | Host.lean:285-286 ("SHOULD keep their values out of logs") |
 | 64 | "Napplets SHOULD read secrets on demand" | SHOULD | NAPPLET | — |
 | 65 | "Napplets SHOULD still declare `additionalProperties: false` explicitly" | SHOULD | NAPPLET | — |
 | 66 | "Shells MUST reject any schema containing `$ref` at `config.registerSchema` time" | MUST | OK | `keyError` :342 at every node (`decodeNode` :427); vector :1083 |

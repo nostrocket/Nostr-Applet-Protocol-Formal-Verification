@@ -3,7 +3,7 @@
 A machine-checked, executable model of a napplet shell: the NIP-5D core, all
 nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
 together, the host interface, and the napplet-side bootstrap and binding.
-867 theorems and 731 evaluated vectors (115 of them end to end through the
+904 theorems and 797 evaluated vectors (124 of them end to end through the
 composed runtime). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
 but the model was built from the upstream texts at the commits listed below.
 
@@ -12,10 +12,10 @@ but the model was built from the upstream texts at the commits listed below.
   `Quot.sound`). No `native_decide`.
 - Every definition is computable, so the model runs as a test oracle
   (`Napplet/Test/Harness.lean`).
-- Coverage against upstream: every one of the 177 type strings in the 19 NAP wire
-  tables is decoded or produced by its component; all 91 JSON request examples in the
+- Coverage against upstream: every one of the 181 type strings in the 19 NAP wire
+  tables is decoded or produced by its component; all 93 JSON request examples in the
   NAP specs decode (`Napplet/Test/UpstreamExamples.lean`); `Napplet/Test/E2E.lean`
-  feeds upstream example JSON for every NAP through `Runtime.step`. All 118 JSON
+  feeds upstream example JSON for every NAP through `Runtime.step`. All 122 JSON
   response examples in the NAP specs are reproduced verbatim by guards
   (`scripts/response_coverage.py`). The INC examples run under a shell policy that names
   endpoints and channels as upstream assumes (`Config.endpointName`,
@@ -111,8 +111,11 @@ the model. This table only shows, for each, which item of the two above it uses.
 | Spec | Source | Commit |
 |---|---|---|
 | NIP-5D | `dskvr/nips` branch `nip/5d` (nostr-protocol/nips#2303) | `f60550c3409d6d81a875088ec83e660571e10504` |
-| Web projection | `napplet/naps` `master` `projections/web.md` | `377bf939c6c906817084b43dd21d424de646dbc2` |
-| NAP-SHELL, NAP-INTENT, NAP-INC, NAP-THEME, NAP-IDENTITY | `napplet/naps` `master` | `377bf939c6c906817084b43dd21d424de646dbc2` |
+| Web projection | `napplet/naps` `master` `projections/web.md`, with PR #148's `intent.launch` binding | `377bf939c6c906817084b43dd21d424de646dbc2`; PR #148 at `9e25e6768b0528e5848297ce0b338bb3c94302bf` |
+| NAP-INC, NAP-THEME | `napplet/naps` `master` | `377bf939c6c906817084b43dd21d424de646dbc2` |
+| NAP-SHELL | `master` plus PR #142, `nap-shell-compatibility` (`domains`, `check`) | `b9b0b7e38d99d9e3ad0b79e3de61b349156ee41f` |
+| NAP-INTENT | `master` plus PR #148, `nap-intent-launch` (explicit launch), and PR #128, `nap-intent-history` (selected-instance delivery) | `9e25e6768b0528e5848297ce0b338bb3c94302bf`, `74f9bf85ebb83b50b7b2ad8308a835d5f3113cd9` |
+| NAP-IDENTITY | `master` plus PR #155, `nap-identity` (`profile` required and nullable) | `c13e8891ca6375bd0063b6dbd995ba42088df75e` |
 | NAP-RELAY | PR #2, `nub-relay` | `9f30b3505335a52c574ff570576687d6467021ff` |
 | NAP-STORAGE | PR #3, `nub-storage` | `4f4cf0ca7ecbd24c284a5d63bcd85e3de6af37ca` |
 | NAP-KEYS | PR #9, `nub-keys` | `8869a4cf77b023f4b049f47c546910a0280dc1a6` |
@@ -130,9 +133,12 @@ the model. This table only shows, for each, which item of the two above it uses.
 | SDK (where the text is silent) | `napplet/web` `main` | `49022721f5ed6067c158f1fee0a8daff6057d0e8` |
 | Reference runtime (where the text is silent) | `kehto/web` `main` | `3181ac164eee4a4fc96020c053e8df16d1938298` |
 
-All PRs were still open on 2026-11-21; none had merged since the digest was written.
+All PRs were still open on 2026-11-22; none had merged since the digest was written.
+PRs #142, #148, #128 and #155 amend NAPs that are already on `master`; the model follows
+the amended text. #148 and #128 both branch from `master`'s NAP-INTENT and overlap only in
+their changelog lines, so `verify_upstream.sh` combines them with `git merge-file --union`.
 `scripts/verify_upstream.sh DIR` fetches every text above at its recorded commit and
-reruns the coverage checks (wire types, the 91 request examples, the response
+reruns the coverage checks (wire types, the 93 request examples, the response
 examples) and the end-to-end vectors against exactly those texts.
 
 ## What is proved
@@ -169,6 +175,15 @@ results to what it actually emits. Examples: `Run.Relay.handle_sign`,
 `Run.Cvm.late_reply_dropped`, `Run.Pow.onReply_done_ok`, `Run.Inc.emit_delivery`,
 `Run.Intent.handle_sends`, `Run.Storage.handle_isolated`. `Audit.lean` lists them.
 
+The amendments: `Run.Shell.check_one_reply` (one result, no call or effect),
+`check_caller_independent`, `check_agrees_with_load` (with `checkManifestEvent_agrees`:
+`check` sees exactly the verified manifest load would bind), `NapShell.assess_incompatible_iff`,
+`assess_compatible_iff`, `assess_agrees_with_load`, `domains_supports`;
+`Run.Intent.launch_outputs` (only the named napplet, never a default or chooser),
+`launch_absent_rejected`, `launch_queue` (no delivery), `acceptLaunch_anonymous`,
+`replay_effects` (one delivery to the selected endpoint as itself, or failure),
+`replay_ignores_defaults`; `Run.Identity.profile_present`.
+
 ### Napplet side
 
 `Binding.boot_once` (one hello per document), `request_fresh` (fresh request ids),
@@ -183,7 +198,7 @@ reach a late handler in order). `Nip19` and `BindingUri` carry their vectors.
 | `Capability` | §9, §11 | `exposure_ignores_declarations`: `R`/`O`/`z`/`i` never widen exposure. `missingRequired_none`: the full `R` set is checked. `compatible_iff`. `andFilter_is_not_compatibility` and `andFilter_admits_incompatible`: NIP-91 `&R` is not a compatibility test (the spec's own example). |
 | `Wire` | §8 | `domain.action` routing vectors. |
 | `Shell` | §6, §7, §16 | The shell transition function `step` and the inductive invariant `Inv` over every `Reachable` state. `nap_unbound_dropped` and `nap_dispatch_requires_binding`: NAP traffic is only processed from a bound port. `dispatch_sender_verified`: the sender identity on every dispatched message came from verified bytes, and its domain is in the policy exposure. `revoke_second_hello`, `revoke_window_msg`, `revoke_second_load`, `revoke_port_closed`: each closes the port, drops the binding and all grants, and removes the frame. `removed_stays_removed`, `no_rebind_removed`, `binding_unique_window`, `grants_only_bound`, `create_exposure`. |
-| `Nap.Shell` | §15.1 | `init_exactly_once`, `init_at_most_once`, `init_capabilities` (the environment lists only that napplet's exposure). |
+| `Nap.Shell` | §15.1 | `init_exactly_once`, `init_at_most_once`, `init_capabilities` (the environment lists only that napplet's exposure). PR #142: `domains_supports`, `domains_nodup`; `assess_incompatible_iff`, `assess_compatible_iff`, `assess_no_required`, `assess_optional_irrelevant`, `assess_agrees_with_load` (with nothing undisclosed, `compatible` exactly when load's required-domain check passes). |
 | `Nap.Intent` | §15.2, §8.1 | Handler precedence: `explicit_no_fallback`, `default_wins`, `unusable_recommendation_falls_back`. `invoke_delivery`: delivery goes only to the resolved handler and carries the authenticated sender. `invoke_single_delivery`, `invoke_result_first`. Convention URI binding: `bindUri_ok` (identity queryless and fragment-free, unique parameter names, no fragment outside `intent.invoke`), plus 10 vectors. |
 | `Nap.Inc` | §15.3 | `emit_delivery`: exact-topic subscribers only, never the emitter, sender stamped by the runtime. `open_ok`: `opened` is enqueued before the result. `open_fail_unchanged`, `chEmit_delivery`, `close_notifies_both`, `destroy_clears`, `destroy_notifies_peers`. |
 | `Nap.Theme` | §15.4 | `get_same_id`, `get_theme_xor_error`, `broadcast_only_exposed`, `broadcast_complete`. Required colours are enforced by the type. |
@@ -508,6 +523,36 @@ the model.
     sidecar resources are sent; nothing cancels an upload in progress (there is no
     message for it), and `cancelled` arises only from a declined consent prompt;
     `relay.query` returns one result.
+
+### Decisions added with the open amendments (PRs #142, #148, #128, #155)
+
+49. **SHELL `check`.** The signature is checked over the full NIP-01 event
+    (`Host.verifyEvent`); the other NIP-5D manifest rules are `checkManifest`'s with the
+    signed `x` value as the artifact hash (`checkManifestEvent`). The target's exposure is
+    `exposedFor` under the shell's own load policy. A declared name the shell does not
+    implement is known unavailable (load treats it as missing, decision 5). Availability
+    the shell will not disclose is per-identity policy (`ShellConfig.undisclosed`, default
+    none) and counts as unknown. A missing `manifest` is `"invalid manifest"`.
+
+50. **INTENT `launch`.** A malformed `target` or `behavior` is `"invalid target"` (as a
+    malformed invocation request is `"invalid convention"`). A target is installed when the
+    catalog lists exactly its catalog id, whether or not it is `dispatchable` (launch needs
+    no `intent` exposure). The confirmation prompt (`Cfg.confirmLaunch`, default on) comes
+    before acceptance, for installed and absent targets alike, so refusal is `"user
+    cancelled"` and does not reveal which it was. Absent targets default to `"not
+    installed"` (`Cfg.absent`). The handler of an absent target is the catalog id its
+    coordinate will have once installed (`nip5d:<address>`). Opening and installing are host
+    effects that carry no sender.
+
+51. **INTENT selected-instance delivery.** The shell selects the instance by window
+    (`HostEvent.nap .intent "replay"`). The instance must have `intent` exposed and its own
+    catalog entry must advertise exactly the convention. Failure is reported to the host
+    (`Effect.nap .intent "replayFailed"`), never to a napplet. A replay is never retained.
+
+52. **IDENTITY results with `error`.** Any result carrying `error` holds the primary field's
+    default (`profile: null`, `pubkeys: []`, …), even if the host also sent a value. PR #155
+    states this for `profile`; the model applies it to every query, as the component
+    documentation already said.
 
 ## Not modelled yet
 

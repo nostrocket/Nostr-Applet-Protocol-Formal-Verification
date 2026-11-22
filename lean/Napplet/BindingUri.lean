@@ -81,6 +81,17 @@ def «open» (uri : String) (o : InvokeOptions) : Except UriError (String → Js
   if (segments b.identity).2 ≠ "open" then throw .notOpen
   invoke uri o
 
+/-- `intent.launch(naddr, options?)` (PR #148, web projection): a bare NIP-19 `naddr` of
+a kind 35129 or 15129 napplet coordinate becomes `target`; `options.behavior` passes
+through. It takes no convention URI and no payload. -/
+def launch (naddr : String) (behavior : Option Run.Intent.Behavior := none) :
+    Except UriError (String → Json) :=
+  match Nip19.launchTarget? naddr with
+  | some (addr, relays) =>
+    pure fun id => Run.Intent.encodeReq (.launch id
+      { address := addr, relays := if relays.isEmpty then none else some relays } behavior)
+  | none => throw .invalidFragment
+
 /-- `inc.emit(topic, payload?)`: the wire message (fire-and-forget, no id). -/
 def emit (topic : String) (payload : Option Json) : Except UriError Json :=
   if topic.startsWith "napplet:" && (topic.toList.contains '?' || topic.toList.contains '#') then do
@@ -117,5 +128,13 @@ def emit (topic : String) (payload : Option Json) : Except UriError Json :=
 #guard match emit "shell:state-get" none with
   | .ok j => Json.same j (Json.parse! "{ \"type\": \"inc.emit\", \"topic\": \"shell:state-get\" }")
   | .error _ => false
+
+-- intent.launch: a napplet naddr becomes `target`; anything else is rejected before sending
+#guard match launch (Nip19.encodeNaddr Nip19.sample Nip19.author) with
+  | .ok f => Json.same (f "l1") (Run.Intent.encodeReq (.launch "l1"
+      { address := "35129:" ++ Nip19.sample.pubkey ++ ":my-napplet", relays := some ["wss://relay.example.com"] } none))
+  | _ => false
+#guard (launch (Nip19.encodeNaddr { Nip19.sample with kind := 30023 } Nip19.author)) matches .error _
+#guard (launch "napplet:profile/open") matches .error _
 
 end Napplet.BindingUri

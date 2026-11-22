@@ -35,25 +35,25 @@ Lean: `Napplet/Run/Resource.lean` (component), `Napplet/Nap/Resource.lean` (pure
 | 27 | `data:` "MUST be size-limited, MIME-sniffed, rasterized when SVG, quota-checked, and otherwise policy-checked. No network access." | MUST | OK | `initSlot` `:709-712` builds a local outcome that goes through `NapResource.bytes` (`itemOf` `:526`) and `applyQuota`; never `Call.fetch` |
 | 28 | `https:` "Full Default Resource Policy applies" | rule | OK | `itemOf` → `NapResource.bytes`; DNS/connect rules HOST (row 43) |
 | 29 | `blossom:` "Runtime MUST verify SHA-256 before delivery" | MUST | OK | `Nap/Resource.lean:164-170`; theorems `blossom_hash_verified` (`Nap/Resource.lean:277`), `itemOf_blossom` (`:916`) |
-| 30 | BUD-10 hints "are advisory and never bypass policy, size limits, or the hash check" | rule | OK | Size and hash are checked in the model whatever the host did; hint handling HOST `Host.lean:590-591` |
-| 31 | `htree:`/`hashtree:` "verifies hashes and decryption before delivery, and MUST NOT leak keys" | MUST | HOST | `Host.lean:594-596`, `Run/Resource.lean:64-67` |
-| 32 | `nostr:` "MUST NOT recursively follow URLs or `nostr:` references in the result" | MUST | HOST | `Host.lean:591-592`; the model also refuses `nsec` (`nostrOk` `:456`) |
+| 30 | BUD-10 hints "are advisory and never bypass policy, size limits, or the hash check" | rule | OK | Size and hash are checked in the model whatever the host did; hint handling HOST `Host.lean:624-625` |
+| 31 | `htree:`/`hashtree:` "verifies hashes and decryption before delivery, and MUST NOT leak keys" | MUST | HOST | `Host.lean:628-630`, `Run/Resource.lean:64-67` |
+| 32 | `nostr:` "MUST NOT recursively follow URLs or `nostr:` references in the result" | MUST | HOST | `Host.lean:625-626`; the model also refuses `nsec` (`nostrOk` `:456`) |
 | 33 | "Unknown schemes MUST return `unsupported-scheme`" | MUST | OK | theorem `unknown_scheme_unsupported` (`:936`) |
 | 34 | "`http:` ... MUST NOT be enabled by default" | MUST | OK | `Policy.httpEnabled := false`; theorem `http_unsupported_by_default` (`:932`) |
 | 35 | "A runtime offering Hashtree reads MUST accept these forms" (`hashtree:<nhash>`, bare `nhash`, `htree://<npub or 64-hex>/<tree>…`) | MUST | OK | `norm` `:467`, `hashtreeOk` `:432`, `htreeOk` `:444`, `htreeIdOk` `:440`. Note: hex is accepted in lowercase only (`hex64` `:393`) |
 | 36 | "creation-only `#link-visible` MUST be rejected by this read API" | MUST | OK | `htreeFragOk` `:437`; vector `:1091` |
-| 37 | "Immutable `nhash` input MUST validate its Bech32 checksum and HTS-01 TLV fields" | MUST | OK | Checksum: `hashtreeOk` (`Bech32.hrp?` `:370`). TLV fields: HOST `Host.lean:604-605` (`invalid-request`) |
+| 37 | "Immutable `nhash` input MUST validate its Bech32 checksum and HTS-01 TLV fields" | MUST | OK | Checksum: `hashtreeOk` (`Bech32.hrp?` `:370`). TLV fields: HOST `Host.lean:638-639` (`invalid-request`) |
 | 38 | "Tree names and entry segments MUST follow upstream URL encoding: split segments before decoding" | MUST | OK | `htreeOk` `:451-453` (`splitOn '/'` then `escapesOk`) |
 | 39 | "Query strings, malformed escapes, unknown fragments, and colon-separated mutable paths MUST return `invalid-request`" | MUST | OK | `htreeOk` `:449-450`, `precheck` `:479`; vectors `:1115-1118` |
-| 40 | "Directories do not yield file bytes and MUST return `invalid-request`" | MUST | HOST | `Host.lean:604-605` |
+| 40 | "Directories do not yield file bytes and MUST return `invalid-request`" | MUST | HOST | `Host.lean:638-639` |
 | 41 | "`self` and petname aliases MAY be accepted only when runtime policy can resolve them unambiguously; otherwise return `invalid-request`" | MAY | OK | Not accepted: `htreeIdOk` `:440` (README "RESOURCE" l.160) |
 | 42 | "Hashtree support MUST advertise both `htree` and `hashtree` in `info.schemes` when disclosed" | MUST | OK | `infoJson` `:620` |
-| 43 | Private IP block (MUST): "Enforce after DNS resolution and before connection. Re-check every redirect. Block RFC1918, loopback, link-local, ULA, and `169.254.169.254`." | MUST | OK | Before connect: HOST `Host.lean:597-599`. The model re-checks every reported hop (`fetchChecked` `Nap/Resource.lean:138`, `isPrivate` `:49`); theorems `bytes_no_private_hop` (`Nap/Resource.lean:254`), `jobItems_policy` (`:907`); wider classes: README decision 12 |
+| 43 | Private IP block (MUST): "Enforce after DNS resolution and before connection. Re-check every redirect. Block RFC1918, loopback, link-local, ULA, and `169.254.169.254`." | MUST | OK | Before connect: HOST `Host.lean:631-633`. The model re-checks every reported hop (`fetchChecked` `Nap/Resource.lean:138`, `isPrivate` `:49`); theorems `bytes_no_private_hop` (`Nap/Resource.lean:254`), `jobItems_policy` (`:907`); wider classes: README decision 12 |
 | 44 | MIME sniffing (MUST): "Classify bytes by sniffing. Enforce scheme-appropriate allowlists." | MUST | RESOLVED (was MISMATCH) | Sniffing: OK (row 24). No MIME allowlist exists, per scheme or at all. `NapResource.finish` (`Nap/Resource.lean:126`) delivers any sniffed type except SVG. Not covered by README |
 | 45 | "Never pass upstream `Content-Type` through" | MUST | OK | As row 2 |
 | 46 | SVG rasterization (MUST): "Raw `image/svg+xml` MUST NOT be delivered. Rasterize ... in an isolated execution context with no network access." | MUST | OK | `finish` `Nap/Resource.lean:126-131`; theorem `bytes_mime_sniffed_not_svg`; isolation HOST `Host.lean:133-134` |
 | 47 | Blossom hash check (MUST): "Hash mismatch returns `decode-failed`" | MUST | OK | `Nap/Resource.lean:170` |
-| 48 | Hashtree verification (MUST): verify root, nodes, chunks, CHK; "mismatch returns `decode-failed`" | MUST | HOST | `Host.lean:594-595`, `:605-606` (`decode-failed` reply, mapped by `outcomeOf` `:507`) |
+| 48 | Hashtree verification (MUST): verify root, nodes, chunks, CHK; "mismatch returns `decode-failed`" | MUST | HOST | `Host.lean:628-629`, `:605-606` (`decode-failed` reply, mapped by `outcomeOf` `:507`) |
 | 49 | Response size cap (SHOULD): "Recommended 10 MiB. Exceed returns `too-large`." | SHOULD | OK | `Policy.maxBytes` `Nap/Resource.lean:112`, `fetchChecked` `:141` |
 | 50 | Fetch timeout (SHOULD): "Recommended 30 s per URL. Exceed returns `timeout`." | SHOULD | OK | `Cfg.timeoutSecs` `:547` (host sets `timedOut`), `fetchChecked` `Nap/Resource.lean:136` |
 | 51 | Concurrency/rate limit (SHOULD): "10 in-flight and 60 requests/minute per napplet. Bulk counts per URL" | SHOULD | OK | `Cfg.maxInFlight` `:545`, `pump` `:689` (per URL). Per-minute rate: OPTIONAL, README l.158-159, l.249 |
@@ -71,7 +71,7 @@ Lean: `Napplet/Run/Resource.lean` (component), `Napplet/Nap/Resource.lean` (pure
 | 63 | Error codes: malformed payload or empty `urls` top-level; "An invalid URL/reference fails only its bulk item" | table | OK | `decode` `:598-602`, `handle` `:730`; per-slot `precheck` |
 | 64 | Security: "Upstream `Content-Type` is attacker-controlled and MUST NOT be trusted" | MUST | OK | As row 2 |
 | 65 | "Raw SVG ... MUST be rasterized before delivery" | MUST | OK | As row 46 |
-| 66 | Hashtree keys: "Runtimes MUST keep them client-side and MUST NOT forward them to relays, storage servers, FIPS peers, or HTTP request bodies" | MUST | HOST | `Host.lean:594-596` |
+| 66 | Hashtree keys: "Runtimes MUST keep them client-side and MUST NOT forward them to relays, storage servers, FIPS peers, or HTTP request bodies" | MUST | HOST | `Host.lean:628-630` |
 | 67 | "Cache scope comes from runtime-bound napplet identity, never napplet payload" | rule | OK | As rows 9 and 11 |
 | 68 | "Runtimes MAY redact schemes or round limits for untrusted napplets" | MAY | OK | `Cfg.discloseInfo`, `discloseLimits` (`:549-551`), `handle` `:727` |
 | 69 | "`resource.info.schemes` ... does not grant fetch authority. Each ... URL still passes through scheme dispatch and policy checks" | rule | OK | `precheck` and `NapResource.bytes` run for every URL whatever `info` said |

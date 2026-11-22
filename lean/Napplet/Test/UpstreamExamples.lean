@@ -14,6 +14,8 @@ def ok {α : Type} : Decoded α → Bool
 #guard ok (Run.Intent.decode (Json.parse! "{\"type\": \"intent.available\", \"id\": \"a1\", \"archetype\": \"profile\"}"))
 #guard ok (Run.Intent.decode (Json.parse! "{\"type\": \"intent.invoke\", \"id\": \"i1\", \"request\": {\"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\", \"payload\": {\"pubkey\": \"abc123...\"}}}"))
 #guard ok (Run.Intent.decode (Json.parse! "{\"type\": \"intent.invoke\", \"id\": \"i2\", \"request\": {\"archetype\": \"emoji-list\", \"action\": \"open\", \"convention\": \"napplet:emoji-list/open\"}}"))
+#guard ok (Run.Intent.decode (Json.parse! "{\"type\": \"intent.launch\", \"id\": \"l1\", \"target\": {\"address\": \"35129:<pubkey>:profiles\"}}"))
+#guard ok (Run.Intent.decode (Json.parse! "{\"type\": \"intent.launch\", \"id\": \"l2\", \"target\": {\"address\": \"35129:<pubkey>:chess\", \"relays\": [\"wss://relay.example.com\"]}}"))
 #guard ok (Run.Inc.decode (Json.parse! "{\"type\": \"inc.emit\", \"topic\": \"napplet:profile/open\", \"payload\": {\"pubkey\": \"abc123...\"}}"))
 #guard ok (Run.Inc.decode (Json.parse! "{\"type\": \"inc.subscribe\", \"id\": \"a1\", \"topic\": \"napplet:profile/open\"}"))
 #guard ok (Run.Inc.decode (Json.parse! "{\"type\": \"inc.unsubscribe\", \"topic\": \"napplet:profile/open\"}"))

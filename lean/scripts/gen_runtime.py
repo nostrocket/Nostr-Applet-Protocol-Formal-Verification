@@ -4,7 +4,7 @@ import sys
 
 # (module, field, domain, cfg_field_or_None, init expression using `cfg`)
 COMPS = [
-    ("Shell", "shellNap", "shell", None, "Run.Shell.St.init"),
+    ("Shell", "shellNap", "shell", None, "Run.Shell.St.init cfg.shell"),
     ("Theme", "theme", "theme", None, "Run.Theme.St.init"),
     ("Identity", "identity", "identity", None, "Run.Identity.St.init"),
     ("Storage", "storage", "storage", None, "Run.Storage.St.init cfg.storageQuota"),

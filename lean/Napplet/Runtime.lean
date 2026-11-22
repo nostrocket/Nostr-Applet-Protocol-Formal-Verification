@@ -115,7 +115,7 @@ def RtState.init (cfg : Config) : RtState where
   now := 0
   user := ""
   names := cfg.endpointName
-  shellNap := Run.Shell.St.init
+  shellNap := Run.Shell.St.init cfg.shell
   theme := Run.Theme.St.init
   identity := Run.Identity.St.init
   storage := Run.Storage.St.init cfg.storageQuota

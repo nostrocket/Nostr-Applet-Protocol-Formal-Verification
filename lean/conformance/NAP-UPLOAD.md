@@ -28,16 +28,16 @@ Lean: `Napplet/Run/Upload.lean` (component), `Napplet/Nap/Upload.lean` (pure mod
 | 20 | "The shell MUST report the integrity hashes (`sha256`, and `originalSha256` when the server transforms the file)" | MUST | OK | `interpret` `:499-519`; theorem `interpret_complete` (`:889`); `Nap/Upload.lean:209` `complete_hashes` |
 | 21 | "The shell SHOULD surface upload progress through `upload.status.changed`" | SHOULD | OK | `onEvent` `:540-553`, `put` `:446-448` |
 | 22 | "The shell SHOULD obtain user consent before the first upload from a napplet, and MAY apply a per-napplet allowance" | SHOULD/MAY | OK | `handle` `:492-495`, `onReply` `:530-532`; theorems `handle_consent_latch` (`:733`), `onReply_consent` (`:749`); README decision 17 |
-| 23 | "The shell MAY upload to multiple mirrors and return them in `fallbackUrls`" | MAY | HOST | `Host.lean:638-639`; carried by `interpret` `:512` |
+| 23 | "The shell MAY upload to multiple mirrors and return them in `fallbackUrls`" | MAY | HOST | `Host.lean:672-673`; carried by `interpret` `:512` |
 | 24 | "The shell MAY strip or rewrite metadata ... and SHOULD reflect this in the returned hashes" | MAY/SHOULD | OK | `Host.transform` (`handle` `:486`, honours `noTransform`); `originalSha256` when the hashes differ (`interpret` `:507`) |
 | 25 | Security: "Shells MUST treat every `upload.upload` as untrusted until policy checks pass" | MUST | OK | `gates` run before any prompt, signature or send (`handle` `:483-495`), and again in `put` `:442`; theorem `onReply_put_requires_policy` (`:830`) |
 | 26 | "Shells MAY redact unavailable rails or coarse-grain limits" | MAY | OK | `Cfg.discloseInfo` (`:139`, `handle` `:473-475`; all or nothing) |
-| 27 | "Shell consent UI SHOULD show the file type, size, target server, and requesting napplet identity, and SHOULD allow the user to inspect or preview the payload" | SHOULD | HOST | `Host.lean:617-621`; `consentDetails` `:460` passes all of them |
+| 27 | "Shell consent UI SHOULD show the file type, size, target server, and requesting napplet identity, and SHOULD allow the user to inspect or preview the payload" | SHOULD | HOST | `Host.lean:651-655`; `consentDetails` `:460` passes all of them |
 | 28 | "Napplets MUST NOT be given signing or encryption primitives through this interface; NIP-98 and Blossom auth events are constructed and signed by the shell only" | MUST | OK | Only `upload.info`/`upload`/`status` decode (`decode` `:276`); auth built by `authTemplate`, never echoed except as the server's request header |
 | 29 | "Shells SHOULD offer metadata stripping and SHOULD make the policy visible to the user" | SHOULD | OPTIONAL | Stripping: `Host.transform`. Visibility of the policy is not stated in `Host.lean` or in README "Optional behaviours" |
-| 30 | "Shells SHOULD make clear to the user that an upload is published, not private" | SHOULD | HOST | `Host.lean:620-621` |
+| 30 | "Shells SHOULD make clear to the user that an upload is published, not private" | SHOULD | HOST | `Host.lean:654-655` |
 | 31 | "A `complete` status with a `url` MUST reflect bytes the shell actually stored" | MUST | OK | `interpret` `:506` (server hash must match the shell's hash of the bytes sent); theorems `interpret_complete` (`:889`), `onReply_complete` (`:958`), `handle_no_complete` (`:1002`) |
-| 32 | "the shell MUST NOT report a success the server did not confirm" | MUST | OK | `interpret` `:503` requires `ok: true` and a `url`; host side `Host.lean:640-641` ("MUST NOT report `ok: true` unless the server confirmed storage") |
+| 32 | "the shell MUST NOT report a success the server did not confirm" | MUST | OK | `interpret` `:503` requires `ok: true` and a `url`; host side `Host.lean:674-675` ("MUST NOT report `ok: true` unless the server confirmed storage") |
 | 33 | "Shells SHOULD rate-limit per-napplet uploads" | SHOULD | OK | `Cfg.maxActive` `:135` (`"quota exceeded"`, `handle` `:481`). This caps concurrent uploads per endpoint; it is not a time-based rate |
 
 Notes

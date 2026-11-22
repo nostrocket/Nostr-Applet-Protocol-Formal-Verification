@@ -20,13 +20,19 @@ methods post `encodeReq` without an id; `on…` handlers register with
 methods go through `BindingUri`. Methods marked local in the tables have no wire
 message.
 
-The tables are the upstream API tables at the commits in `lean/README.md`, verbatim.
+The tables are the upstream API tables at the commits in `lean/README.md`, verbatim
+(NAP-SHELL with PR #142's `domains` and `check`, NAP-INTENT with PR #148's `launch`).
+`shell.domains()` is `NapShell.domains` over the injected domain objects and agrees with
+`supports` (`NapShell.domains_supports`). In the web projection `intent.launch` takes a
+bare NIP-19 `naddr` (`BindingUri.launch`).
 
 ### `window.napplet.shell` (NAP-SHELL)
 
 | Operation | Parameters | Result | Wire |
 |-----------|------------|--------|------|
 | `supports` | `domain` (`text`) | `boolean` | local projection availability query |
+| `domains` | none | list of text | local projection availability query |
+| `check` | `manifest` (`NappletManifest`) | `ShellCompatibility` | `shell.check` / `shell.check.result` |
 | `services` | none | list of text service names | local read of `shell.init` |
 | `ready` | none | `ShellEnvironment` | resolves after `shell.ready` / `shell.init` |
 | `onReady` | handler for `ShellEnvironment` | `Subscription` handle | fires after `shell.init` |
@@ -41,6 +47,7 @@ The tables are the upstream API tables at the commits in `lean/README.md`, verba
 | `handlers` | none | list of `IntentAvailability` | `intent.handlers` / `intent.handlers.result` |
 | `onChanged` | handler for `IntentAvailability` | `Subscription` handle | `intent.changed` |
 | `onDelivery` | handler for `IntentDelivery` | `Subscription` handle | `intent.deliver` |
+| `launch` | target (`IntentTarget`), optional behavior (`IntentBehavior`) | `IntentLaunchResult` | `intent.launch` / `intent.launch.result` |
 
 ### `window.napplet.inc` (NAP-INC)
 

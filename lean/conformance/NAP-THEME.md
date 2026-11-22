@@ -19,7 +19,7 @@ Lean: `Napplet/Run/Theme.lean` (component), `Napplet/Nap/Theme.lean` (pure model
 | 11 | "`fonts`, `background`, and `title` ... MAY be omitted" | MAY | OK | `Run/Theme.lean:50-60` |
 | 12 | "The shell MUST broadcast `theme.changed` when the active theme changes to all napplets to which it exposes `theme`" | MUST | OK | `Run/Theme.lean:103-107`; theorem `broadcast_complete` (`Nap/Theme.lean:75`) |
 | 13 | "It MUST NOT deliver these messages to napplets without that domain" | MUST NOT | OK | theorems `changed_only_exposed` (`Run/Theme.lean:127`), `broadcast_only_exposed` (`Nap/Theme.lean:67`) |
-| 14 | "It MUST NOT infer grants from `R` or `O` tags" | MUST NOT | OK | Uses `Ctx.exposed` only (`Run/Theme.lean:106`); `Capability.lean:46` |
+| 14 | "It MUST NOT infer grants from `R` or `O` tags" | MUST NOT | OK | Uses `Ctx.exposed` only (`Run/Theme.lean:106`); `Capability.lean:51` |
 | 15 | "The shell MAY source the theme from any origin" | MAY | HOST | `HostEvent.themeChanged` (`Host.lean:234-235`, `Host.lean:253-255`) |
 | 16 | Kind 16767: shells sourcing from it "SHOULD map event tags to the typed theme payload as follows" | SHOULD | HOST | Theme sourcing is the host's (`Host.lean:253-255`); not restated |
 | 17 | "Shells MUST strip these prefixes [`url `, `mode `, `m `] when extracting values" | MUST (conditional) | RESOLVED (was MISMATCH) (host doc) | The host builds the `Theme` JSON, but `Host.lean:253-255` does not state the kind 16767 mapping or the prefix-stripping rule |

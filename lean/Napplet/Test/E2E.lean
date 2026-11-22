@@ -432,4 +432,46 @@ def sDesc := Runtime.step testHost regCfg sReg0 (.message 7 (Json.parse! "{ \"ty
       ["{ \"type\": \"cvm.registry.describe.result\", \"id\": \"s1\", \"entry\": { \"family\": \"relatr\", \"schemaHashes\": [\"a7f3d9...\"], \"selected\": { \"pubkey\": \"65a334...\", \"relays\": [\"wss://relay.example.com\"] }, \"tools\": [ { \"name\": \"search_profiles\", \"schemaHash\": \"a7f3d9...\", \"inputSchema\": { \"type\": \"object\", \"properties\": { \"q\": { \"type\": \"string\" } }, \"required\": [\"q\"] } } ] } }"]
   | _ => false
 
+/-! ### PR #142, #148, #128 end to end -/
+
+-- NAP-SHELL `shell.check`: the target's own exposure under the load policy, not the caller's
+def chessManifest (reqs : String) : String :=
+  "{ \"id\": \"m1\", \"pubkey\": \"" ++ publisher ++ "\", \"created_at\": 1, \"kind\": 35129, \"content\": \"Chess\", \"sig\": \"s\", \"tags\": [[\"d\", \"chess\"], [\"x\", \"" ++ hexOf 5 ++ "\"]" ++ reqs ++ "] }"
+def chessPolicy (id : Identity) : List Domain := if id.dTag = some "chess" then [.theme] else allDomains
+def checkCfg : Config := { testCfg with shell := { supported := allDomains, policy := chessPolicy } }
+def sChk : RtState := (runAll testHost checkCfg (.init checkCfg) (bootInputs 1 7 "my-napplet" [1])).1
+#guard sendsAre 7 (Runtime.step testHost checkCfg sChk (.message 7 (Json.parse!
+    ("{ \"type\": \"shell.check\", \"id\": \"c1\", \"manifest\": " ++ chessManifest ", [\"R\", \"relay\"]" ++ " }")))).2
+  ["{ \"type\": \"shell.check.result\", \"id\": \"c1\", \"compatibility\": {
+     \"status\": \"incompatible\", \"missingRequired\": [\"relay\"], \"missingOptional\": []
+   } }"]
+#guard sendsAre 7 (Runtime.step testHost checkCfg sChk (.message 7 (Json.parse!
+    ("{ \"type\": \"shell.check\", \"id\": \"c2\", \"manifest\": " ++ chessManifest ", [\"R\", \"theme\"], [\"O\", \"relay\"]" ++ " }")))).2
+  ["{ \"type\": \"shell.check.result\", \"id\": \"c2\", \"compatibility\": { \"status\": \"compatible\", \"missingRequired\": [], \"missingOptional\": [\"relay\"] } }"]
+#guard sendsAre 7 (post s1 7 "{ \"type\": \"shell.check\", \"id\": \"c3\", \"manifest\": { \"kind\": 1 } }").2
+  ["{ \"type\": \"shell.check.result\", \"id\": \"c3\", \"error\": \"invalid manifest\" }"]
+
+-- NAP-INTENT `intent.launch`: confirm, then open exactly the named napplet
+def sLaunch := post sCat.1 7 ("{ \"type\": \"intent.launch\", \"id\": \"l1\", \"target\": { \"address\": \"35129:" ++ publisher ++ ":profile-viewer\" } }")
+#guard sentTo 7 sLaunch.2 == []
+#guard match calls sLaunch.2 with
+  | [(t, .prompt .intent "launch" _)] =>
+    let r := Runtime.step testHost testCfg sLaunch.1 (.reply t (.decision true none))
+    sendsAre 7 r.2 ["{ \"type\": \"intent.launch.result\", \"id\": \"l1\", \"result\": { \"ok\": true, \"handler\": \"" ++ viewerId ++ "\" } }"] &&
+    r.2.contains (.effect (.nap .intent "open" (Json.parse! ("{\"handler\":\"" ++ viewerId ++ "\"}"))))
+  | _ => false
+#guard sendsAre 7 (post sCat.1 7 ("{ \"type\": \"intent.launch\", \"id\": \"l3\", \"target\": { \"address\": \"35129:" ++ publisher ++ ":chess\" } }")).2
+  ["{ \"type\": \"intent.launch.result\", \"id\": \"l3\", \"result\": { \"ok\": false, \"error\": \"not installed\" } }"]
+-- the source going away cancels its pending confirmation
+#guard (Runtime.step testHost testCfg sLaunch.1 (.portClosed 7)).2.any (· matches .effect (.cancel _))
+
+-- NAP-INTENT selected-instance delivery: replay to the viewer in window 2, as itself
+#guard sendsAre 8 (Runtime.step testHost testCfg sCat.1 (.event (.nap .intent "replay" (Json.parse!
+    "{ \"window\": 2, \"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\", \"payload\": { \"pubkey\": \"abc123...\" } }")))).2
+  ["{ \"type\": \"intent.deliver\", \"delivery\": { \"sender\": \"" ++ viewerId ++ "\", \"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\", \"payload\": { \"pubkey\": \"abc123...\" } } }"]
+-- window 1 (the feed) does not advertise the convention: no delivery anywhere
+#guard (Runtime.step testHost testCfg sCat.1 (.event (.nap .intent "replay" (Json.parse!
+    "{ \"window\": 1, \"archetype\": \"profile\", \"action\": \"open\", \"convention\": \"napplet:profile/open\" }")))).2 ==
+  [.effect (.nap .intent "replayFailed" (Json.parse! "{\"window\": 1}"))]
+
 end Napplet.Test

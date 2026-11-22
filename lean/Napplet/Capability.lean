@@ -28,6 +28,11 @@ structure ShellConfig where
   policy : Identity → List Domain
   /-- Reject (rather than warn) when a required domain is unavailable. -/
   strictRequired : Bool := true
+  /-- Domains whose availability to this identity the shell cannot determine or will
+  not disclose to another napplet (NAP-SHELL `check`, PR #142: "Availability that
+  cannot be determined or disclosed is unknown"; "Unavailable policy information MUST
+  remain undisclosed"). Only `check` reads it; load-time exposure does not. -/
+  undisclosed : Identity → List Domain := fun _ => []
 
 /-- Domains injected into `window.napplet` for this identity. -/
 def exposedFor (cfg : ShellConfig) (id : Identity) : List Domain :=

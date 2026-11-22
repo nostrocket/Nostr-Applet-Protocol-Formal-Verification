@@ -51,6 +51,10 @@ open Napplet
 #print axioms Runtime.message_pow
 -- components as composed (each runs with the context Runtime derives from the binding)
 #print axioms Run.Shell.init_exactly_once
+#print axioms Run.Shell.check_one_reply
+#print axioms Run.Shell.check_caller_independent
+#print axioms Run.Shell.check_agrees_with_load
+#print axioms Run.Identity.profile_present
 #print axioms Run.Theme.changed_only_exposed
 #print axioms Run.Identity.getPublicKey_no_error
 #print axioms Run.Storage.handle_isolated
@@ -58,6 +62,9 @@ open Napplet
 #print axioms Run.Inc.emit_delivery
 #print axioms Run.Inc.open_ok
 #print axioms Run.Intent.handle_sends
+#print axioms Run.Intent.launch_outputs
+#print axioms Run.Intent.launch_absent_rejected
+#print axioms Run.Intent.replay_effects
 #print axioms Run.Relay.handle_sign
 #print axioms Run.Relay.onReply_delivers_plaintext
 #print axioms Run.Outbox.onReply_publish_relays
@@ -99,6 +106,10 @@ open Napplet
 -- merged NAPs
 #print axioms NapShell.init_exactly_once
 #print axioms NapShell.init_capabilities
+#print axioms NapShell.domains_supports
+#print axioms NapShell.assess_incompatible_iff
+#print axioms NapShell.assess_agrees_with_load
+#print axioms checkManifestEvent_agrees
 #print axioms NapIntent.explicit_no_fallback
 #print axioms NapIntent.invoke_delivery
 #print axioms NapIntent.bindUri_ok
