@@ -3,7 +3,7 @@
 A machine-checked, executable model of a napplet shell: the NIP-5D core, all
 nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
 together, the host interface, and the napplet-side bootstrap and binding.
-818 theorems and 511 evaluated vectors (92 of them end to end through the
+867 theorems and 731 evaluated vectors (115 of them end to end through the
 composed runtime). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
 but the model was built from the upstream texts at the commits listed below.
 

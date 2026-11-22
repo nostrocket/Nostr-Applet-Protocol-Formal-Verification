@@ -13,7 +13,7 @@ upstream text as of November 2026.
 | Path | What it is |
 |---|---|
 | [`NAPPLETS-SPEC.md`](NAPPLETS-SPEC.md) | One-document digest of NIP-5D and all 21 NAPs. It covers the manifest, transport, identity, sandbox, every NAP's operations and wire messages, governance, tooling, and open review issues. It is a close paraphrase of the sources, not a verbatim copy. |
-| [`lean/`](lean/README.md) | An executable, mechanised model of a napplet shell in Lean 4: 818 machine-checked theorems and 511 evaluated vectors. It covers the NIP-5D core, every live NAP, the JSON wire codec, one composed runtime, the host interface and the napplet-side binding. |
+| [`lean/`](lean/README.md) | An executable, mechanised model of a napplet shell in Lean 4: 867 machine-checked theorems and 731 evaluated vectors. It covers the NIP-5D core, every live NAP, the JSON wire codec, one composed runtime, the host interface and the napplet-side binding. |
 
 ## The Lean model
 
