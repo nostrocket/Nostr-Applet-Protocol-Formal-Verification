@@ -164,6 +164,14 @@ theorem tab_nodup {d : β} {keep : β → Bool} {ks : List α} {f : α → β} :
   List.Nodup.sublist (fst_filterMap_sublist (g := f) (keep := fun k => keep (f k)) (dedup ks))
     (nodup_dedup ks)
 
+theorem mem_tab_entries {d : β} {keep : β → Bool} {ks : List α} {f : α → β} {e : α × β}
+    (h : e ∈ (tab d keep ks f).entries) : e.2 = f e.1 ∧ keep e.2 = true ∧ e.1 ∈ ks := by
+  simp only [tab, List.mem_filterMap] at h
+  obtain ⟨k, hk, he⟩ := h
+  split at he
+  · rename_i hkeep; cases he; exact ⟨rfl, hkeep, mem_dedup.mp hk⟩
+  · cases he
+
 /-- Well-formed: keys are distinct and every entry is kept. -/
 def WF (keep : β → Bool) (m : FMap α β) : Prop :=
   m.keys.Nodup ∧ ∀ e ∈ m.entries, keep e.2 = true

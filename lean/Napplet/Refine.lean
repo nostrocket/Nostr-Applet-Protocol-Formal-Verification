@@ -542,40 +542,46 @@ theorem step_browser (h : Host) (cfg : Config) (S : RtState) (i : Input) (e : Ev
     (he : i.event? = some e) :
     ∃ S0 : RtState, S0.shell = S.shell ∧ S0.names = S.names ∧ S0.storage = S.storage ∧
       S0.config = S.config ∧ S0.display = S.display ∧ (∀ w, w ∉ i.wins → S0.inst w = S.inst w) ∧
-      e.wins ⊆ i.wins ∧ e.ports ⊆ i.ports ∧ step h cfg S i = browserStep h cfg S0 e := by
+      e.wins ⊆ i.wins ∧ e.ports ⊆ i.ports ∧ step h cfg S i = browserStep h cfg S0 e ∧
+      S0.ports = S.ports ∧
+      (∀ w, S0.inst w ≠ S.inst w → S.shell.frames w = none ∧ ∃ m b, e = .create w m b) := by
   cases i with
   | create w m bytes inst =>
     simp only [Input.event?, Option.some.injEq] at he; subst he
     by_cases hn : (S.shell.frames w).isNone = true
-    · refine ⟨{ S with inst := upd S.inst w inst }, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
+    · refine ⟨{ S with inst := upd S.inst w inst }, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, rfl, ?_⟩
       · intro v hv; simp only [Input.wins, List.mem_singleton] at hv; simp [upd, hv]
       · simp [Event.wins, Input.wins]
       · simp [Event.ports]
       · simp [step, hn]
-    · refine ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, ?_, ?_, ?_⟩
+      · intro v hv
+        by_cases hvw : v = w
+        · subst hvw; exact ⟨by simpa using hn, m, bytes, rfl⟩
+        · simp [upd, hvw] at hv
+    · refine ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, ?_, ?_, ?_, rfl, fun _ h => absurd rfl h⟩
       · simp [Event.wins, Input.wins]
       · simp [Event.ports]
       · simp [step, hn]
   | load w =>
     simp only [Input.event?, Option.some.injEq] at he; subst he
     exact ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, by simp [Event.wins, Input.wins],
-      by simp [Event.ports], rfl⟩
+      by simp [Event.ports], rfl, rfl, fun _ h => absurd rfl h⟩
   | hello w ps =>
     simp only [Input.event?, Option.some.injEq] at he; subst he
     exact ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, by simp [Event.wins, Input.wins],
-      by simp [Event.ports, Input.ports], rfl⟩
+      by simp [Event.ports, Input.ports], rfl, rfl, fun _ h => absurd rfl h⟩
   | windowMsg w =>
     simp only [Input.event?, Option.some.injEq] at he; subst he
     exact ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, by simp [Event.wins, Input.wins],
-      by simp [Event.ports], rfl⟩
+      by simp [Event.ports], rfl, rfl, fun _ h => absurd rfl h⟩
   | portClosed p =>
     simp only [Input.event?, Option.some.injEq] at he; subst he
     exact ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, by simp [Event.wins],
-      by simp [Event.ports, Input.ports], rfl⟩
+      by simp [Event.ports, Input.ports], rfl, rfl, fun _ h => absurd rfl h⟩
   | grant p g =>
     simp only [Input.event?, Option.some.injEq] at he; subst he
     exact ⟨S, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, by simp [Event.wins],
-      by simp [Event.ports, Input.ports], rfl⟩
+      by simp [Event.ports, Input.ports], rfl, rfl, fun _ h => absurd rfl h⟩
   | message p j => simp [Input.event?] at he
   | reply t r => simp [Input.event?] at he
   | event ev => simp [Input.event?] at he
@@ -583,7 +589,7 @@ theorem step_browser (h : Host) (cfg : Config) (S : RtState) (i : Input) (e : Ev
 
 theorem Frame.browser (h : Host) (cfg : Config) (S : RtState) (i : Input) (e : Event)
     (he : i.event? = some e) : Frame S (step h cfg S i).1 i (step h cfg S i).2 := by
-  obtain ⟨S0, e1, e2, e3, e4, e5, e6, hw, hp, hstep⟩ := step_browser h cfg S i e he
+  obtain ⟨S0, e1, e2, e3, e4, e5, e6, hw, hp, hstep, -, -⟩ := step_browser h cfg S i e he
   rw [hstep]
   obtain ⟨b1, b2, b3, b4, b5, b6, b7, bo⟩ := browserStep_spec h cfg S0 e
   have ho : ∀ o ∈ (Napplet.step h.crypto cfg.shell S.shell e).2, ∀ x ∈ ofShell o,
@@ -1048,5 +1054,453 @@ abstraction. With `step'_outputs`, every theorem about `Runtime.step` holds of `
 theorem abs_step' {h : Host} {cfg : Config} {s : RtState'} (hw : WF s) (i : Input) :
     abs (step' h cfg s i).1 = (Runtime.step h cfg (abs s) i).1 :=
   abs_reify hw (step_frame h cfg (abs s) i)
+
+/-! ### Well-formedness is preserved -/
+
+theorem WF.reify {s : RtState'} {i : Input} {t : RtState} {outs : List Runtime.Output}
+    (hw : WF s) (hf : Frame (abs s) t i outs) : WF (reify s i (abs s) t outs) where
+  live_dflt := rfl
+  live_wf := FMap.tab_wf
+  live_live := by
+    intro e he
+    obtain ⟨h1, -, -⟩ := FMap.mem_tab_entries he
+    rw [h1, liveOnly_idem]
+  live_not_removed := by
+    intro w hk
+    obtain ⟨-, hkeep⟩ := FMap.keys_tab hk
+    show Ivs.mem (addRemoved t.shell.frames (s.shell.live.keys ++ (i.wins ++ outWins outs))
+      s.shell.removed) w = false
+    cases hm : Ivs.mem (addRemoved t.shell.frames _ s.shell.removed) w
+    · rfl
+    · rcases (addRemoved_mem _ _ _ hw.removed w).mp hm with h1 | ⟨_, h2⟩
+      · have := hf.removed w (by simp [abs, ShellState'.abs, h1])
+        rw [this] at hkeep; simp [liveOnly] at hkeep
+      · rw [h2] at hkeep; simp [liveOnly] at hkeep
+  removed := addRemoved_canon _ _ _ hw.removed
+  bindings_dflt := rfl
+  bindings_wf := FMap.tab_wf
+  grants_dflt := rfl
+  grants_wf := FMap.tab_wf
+  inst_dflt := rfl
+  inst_wf := FMap.tab_wf
+  store_dflt := rfl
+  store_wf := FMap.tab_wf
+  schemas_dflt := rfl
+  schemas_wf := FMap.tab_wf
+  values_dflt := rfl
+  values_wf := FMap.tab_wf
+  fb_dflt := rfl
+  fb_wf := FMap.tab_wf
+
+theorem WF.step' {h : Host} {cfg : Config} {s : RtState'} (hw : WF s) (i : Input) :
+    WF (step' h cfg s i).1 :=
+  hw.reify (step_frame h cfg (abs s) i)
+
+/-! ### Initial state and reachability -/
+
+/-- The initial finite state. `names` is the finite form of `Config.endpointName`. -/
+def init' (cfg : Config) (names : FMap WindowId (Option String)) : RtState' where
+  shell := { live := .const none, removed := [], bindings := .const none, grants := .const [] }
+  inst := .const 0
+  ports := []
+  now := 0
+  user := ""
+  names := names
+  shellNap := Run.Shell.St.init cfg.shell
+  theme := Run.Theme.St.init
+  identity := Run.Identity.St.init
+  storage := { store := .const [], quota := cfg.storageQuota }
+  inc := Run.Inc.St.init cfg.incCfg
+  intent := Run.Intent.St.init cfg.intentCfg
+  notify := Run.Notify.St.init cfg.notifyCfg
+  display := { cfg := cfg.displayCfg, devices := cfg.displayCfg.devices, offline := [],
+               fb := .const [0, 0, 0] }
+  keys := Run.Keys.St.init cfg.keysCfg
+  relay := Run.Relay.St.init cfg.relayCfg
+  outbox := Run.Outbox.St.init cfg.outboxCfg
+  media := Run.Media.St.init cfg.mediaCfg
+  config := { schemas := .const none, values := .const none, subs := [] }
+  resource := Run.Resource.St.init cfg.resourceCfg
+  upload := Run.Upload.St.init cfg.uploadCfg
+  link := Run.Link.St.init cfg.linkCfg
+  value := Run.Value.St.init cfg.valueCfg
+  cvm := Run.Cvm.St.init cfg.cvmCfg
+  pow := Run.Pow.St.init cfg.powCfg
+
+theorem WF.init' (cfg : Config) (names : FMap WindowId (Option String)) : WF (init' cfg names) where
+  live_dflt := rfl
+  live_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  live_live := by simp [Refine.init', FMap.const]
+  live_not_removed := by simp [Refine.init', FMap.const, FMap.keys]
+  removed := trivial
+  bindings_dflt := rfl
+  bindings_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  grants_dflt := rfl
+  grants_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  inst_dflt := rfl
+  inst_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  store_dflt := rfl
+  store_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  schemas_dflt := rfl
+  schemas_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  values_dflt := rfl
+  values_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+  fb_dflt := rfl
+  fb_wf := ⟨List.nodup_nil, by simp [Refine.init', FMap.const]⟩
+
+/-- `init'` denotes `RtState.init` when `names` is the endpoint-name policy. -/
+theorem abs_init' (cfg : Config) (names : FMap WindowId (Option String))
+    (hn : names.get = cfg.endpointName) : abs (init' cfg names) = RtState.init cfg := by
+  simp only [abs, Refine.init', RtState.init, ShellState'.abs, hn, FMap.get_const]
+  rfl
+
+/-- States `step'` reaches from `init'`. -/
+inductive Reachable' (h : Host) (cfg : Config) (names : FMap WindowId (Option String)) : RtState' → Prop where
+  | init : Reachable' h cfg names (init' cfg names)
+  | step {s : RtState'} (i : Input) : Reachable' h cfg names s → Reachable' h cfg names (step' h cfg s i).1
+
+/-- Every state `step'` reaches is well formed and is the abstraction of a state
+`Runtime.step` reaches, so every theorem about reachable states applies to it. -/
+theorem Reachable'.abs {h : Host} {cfg : Config} {names : FMap WindowId (Option String)}
+    (hn : names.get = cfg.endpointName) {s : RtState'} (hr : Reachable' h cfg names s) :
+    WF s ∧ Runtime.Reachable h cfg (Refine.abs s) := by
+  induction hr with
+  | init => exact ⟨WF.init' cfg names, abs_init' cfg names hn ▸ .init⟩
+  | step i _ ih =>
+    refine ⟨ih.1.step' i, ?_⟩
+    rw [abs_step' ih.1]
+    exact .step i ih.2
+
+/-! ### Invariants for the memory bound -/
+
+section mem
+variable {c : Crypto} {scfg : ShellConfig} {sh : ShellState}
+
+def IsLive (o : Option FrameStatus) : Prop := ∃ id ex p ld, o = some (.live id ex p ld)
+
+theorem revoke_live_or (w w' : WindowId) (hl : IsLive (sh.frames w)) :
+    IsLive ((revoke sh w').1.frames w) ∨ Napplet.Output.removeFrame w ∈ (revoke sh w').2 := by
+  rcases revoke_frames_frame (s := sh) w w' with h | h
+  · exact .inl (h ▸ hl)
+  · exact .inr h
+
+/-- A live frame stays live unless the shell removes it. -/
+theorem live_stays (e : Event) (w : WindowId) (hl : IsLive (sh.frames w)) :
+    IsLive ((Napplet.step c scfg sh e).1.frames w) ∨
+      Napplet.Output.removeFrame w ∈ (Napplet.step c scfg sh e).2 := by
+  obtain ⟨id, ex, p, ld, hf⟩ := hl
+  cases e with
+  | create w' m bytes =>
+    simp only [Napplet.step]
+    split
+    · exact .inl ⟨id, ex, p, ld, hf⟩
+    · split
+      · exact .inl ⟨id, ex, p, ld, hf⟩
+      · have : w ≠ w' := by intro hw; subst hw; simp_all
+        exact .inl ⟨id, ex, p, ld, by simp [upd, this, hf]⟩
+  | load w' =>
+    simp only [Napplet.step]
+    split
+    · by_cases hw : w = w'
+      · subst hw; exact .inl ⟨_, _, _, _, by dsimp only; rw [upd_same]⟩
+      · exact .inl ⟨id, ex, p, ld, by simp [upd, hw, hf]⟩
+    · exact revoke_live_or w w' ⟨id, ex, p, ld, hf⟩
+    · exact .inl ⟨id, ex, p, ld, hf⟩
+  | hello w' ports =>
+    simp only [Napplet.step]
+    split
+    · split
+      · split
+        · by_cases hw : w = w'
+          · subst hw; exact .inl ⟨_, _, _, _, by dsimp only; rw [upd_same]⟩
+          · exact .inl ⟨id, ex, p, ld, by simp [upd, hw, hf]⟩
+        · exact .inl ⟨id, ex, p, ld, hf⟩
+      · exact .inl ⟨id, ex, p, ld, hf⟩
+    · exact revoke_live_or w w' ⟨id, ex, p, ld, hf⟩
+    · exact .inl ⟨id, ex, p, ld, hf⟩
+  | windowMsg w' =>
+    simp only [Napplet.step]
+    split
+    · exact revoke_live_or w w' ⟨id, ex, p, ld, hf⟩
+    · exact .inl ⟨id, ex, p, ld, hf⟩
+  | portClosed q =>
+    simp only [Napplet.step]
+    split
+    · rename_i b _
+      exact revoke_live_or w b.window ⟨id, ex, p, ld, hf⟩
+    · exact .inl ⟨id, ex, p, ld, hf⟩
+  | nap q env => exact .inl ⟨id, ex, p, ld, by rw [step_nap_state]; exact hf⟩
+  | grant q g =>
+    simp only [Napplet.step]
+    split <;> exact .inl ⟨id, ex, p, ld, hf⟩
+
+/-- Creating a frame in an unused window either makes it live or rejects it. -/
+theorem create_none {w : WindowId} {m : ManifestEvent} {bytes : Bytes} (hn : sh.frames w = none) :
+    IsLive ((Napplet.step c scfg sh (.create w m bytes)).1.frames w) ∨
+      ∃ er, Napplet.Output.rejected w er ∈ (Napplet.step c scfg sh (.create w m bytes)).2 := by
+  simp only [Napplet.step, hn]
+  split
+  · rename_i er _; exact .inr ⟨er, by simp⟩
+  · exact .inl ⟨_, _, _, _, by dsimp only; rw [upd_same]⟩
+
+theorem boundPorts_revoke (w : WindowId) : Runtime.boundPorts (revoke sh w).2 = [] := by
+  unfold revoke; split <;> rfl
+
+/-- A shell step binds at most one port, and only one that was unbound. -/
+theorem boundPorts_step (e : Event) :
+    (Runtime.boundPorts (Napplet.step c scfg sh e).2).length ≤ 1 ∧
+      ∀ q ∈ Runtime.boundPorts (Napplet.step c scfg sh e).2, sh.bindings q = none := by
+  cases e with
+  | create w m bytes =>
+    simp only [Napplet.step]
+    split
+    · simp [Runtime.boundPorts]
+    · split <;> simp [Runtime.boundPorts]
+  | load w =>
+    simp only [Napplet.step]
+    split
+    · simp [Runtime.boundPorts]
+    · rw [boundPorts_revoke]; simp
+    · simp [Runtime.boundPorts]
+  | hello w ports =>
+    simp only [Napplet.step]
+    split
+    · split
+      · split
+        · rename_i hb; simp [Runtime.boundPorts, hb]
+        · simp [Runtime.boundPorts]
+      · simp [Runtime.boundPorts]
+    · rw [boundPorts_revoke]; simp
+    · simp [Runtime.boundPorts]
+  | windowMsg w =>
+    simp only [Napplet.step]
+    split
+    · rw [boundPorts_revoke]; simp
+    · simp [Runtime.boundPorts]
+  | portClosed p =>
+    simp only [Napplet.step]
+    split
+    · rw [boundPorts_revoke]; simp
+    · simp [Runtime.boundPorts]
+  | nap p env =>
+    simp only [Napplet.step]
+    split
+    · split
+      · split <;> simp [Runtime.boundPorts]
+      · simp [Runtime.boundPorts]
+    · simp [Runtime.boundPorts]
+  | grant p g =>
+    simp only [Napplet.step]
+    split <;> simp [Runtime.boundPorts]
+
+end mem
+
+theorem mem_removedFrames_of {os : List Napplet.Output} {w : WindowId}
+    (h : Napplet.Output.removeFrame w ∈ os ∨ ∃ e, Napplet.Output.rejected w e ∈ os) :
+    w ∈ removedFrames os := by
+  induction os with
+  | nil => rcases h with h | ⟨_, h⟩ <;> simp at h
+  | cons o os ih =>
+    rcases h with h | ⟨e, h⟩
+    · rcases List.mem_cons.mp h with rfl | h
+      · simp [removedFrames]
+      · have := ih (.inl h); cases o <;> simp [removedFrames, this]
+    · rcases List.mem_cons.mp h with rfl | h
+      · simp [removedFrames]
+      · have := ih (.inr ⟨e, h⟩); cases o <;> simp [removedFrames, this]
+
+theorem clearInst_mem (f : WindowId → Nat) : ∀ (ws : List WindowId) (w : WindowId),
+    w ∈ ws → clearInst f ws w = 0
+  | [], _, h => by simp at h
+  | v :: ws, w, h => by
+    simp only [clearInst]
+    by_cases hw : w ∈ ws
+    · exact clearInst_mem _ ws w hw
+    · rw [clearInst_other _ ws w hw]
+      simp only [List.mem_cons] at h
+      rcases h with rfl | h
+      · simp [upd]
+      · exact absurd h hw
+
+theorem napStep_ports (h : Host) (w : World) (cx : Ctx) (s : RtState) (j : Json) (d : Domain) :
+    (napStep h w cx s j d).1.ports = s.ports := by
+  cases d <;> simp only [napStep, lift] <;> split <;> rfl
+
+/-- Inputs that are not browser events leave the shell, instance ids and ports alone. -/
+theorem step_nonbrowser (h : Host) (cfg : Config) (S : RtState) (i : Input) (hi : i.event? = none) :
+    (Runtime.step h cfg S i).1.shell = S.shell ∧ (Runtime.step h cfg S i).1.inst = S.inst ∧
+      (Runtime.step h cfg S i).1.ports = S.ports := by
+  cases i with
+  | message p j =>
+    simp only [Runtime.step]
+    split
+    · exact ⟨rfl, rfl, rfl⟩
+    · split
+      · split
+        · exact ⟨(napStep_fields _ _ _ _ _ _).1, (napStep_fields _ _ _ _ _ _).2.1, napStep_ports _ _ _ _ _ _⟩
+        · exact ⟨rfl, rfl, rfl⟩
+      · exact ⟨rfl, rfl, rfl⟩
+  | reply tag r =>
+    refine ⟨(replyStep_fields h S tag r).1, (replyStep_fields h S tag r).2.1, ?_⟩
+    simp only [Runtime.step, replyStep]; split <;> rfl
+  | event e => exact ⟨(eventStep_fields h S e).1, (eventStep_fields h S e).2.1, rfl⟩
+  | tick n => exact ⟨rfl, rfl, rfl⟩
+  | _ => simp [Input.event?] at hi
+
+/-- Memory invariant of the reference machine: a non-zero instance id belongs to a live
+frame, and `ports` lists bound ports without repetition. -/
+structure MemInv (S : RtState) : Prop where
+  inst : ∀ w, S.inst w ≠ 0 → IsLive (S.shell.frames w)
+  ports_bound : ∀ p ∈ S.ports, (S.shell.bindings p).isSome = true
+  ports_nodup : S.ports.Nodup
+
+theorem MemInv.init (cfg : Config) : MemInv (RtState.init cfg) where
+  inst _ h := absurd rfl h
+  ports_bound _ h := by simp [RtState.init] at h
+  ports_nodup := List.nodup_nil
+
+theorem MemInv.step {h : Host} {cfg : Config} {S : RtState} (hm : MemInv S) (i : Input) :
+    MemInv (Runtime.step h cfg S i).1 := by
+  cases hi : i.event? with
+  | none =>
+    obtain ⟨e1, e2, e3⟩ := step_nonbrowser h cfg S i hi
+    exact ⟨fun w hw => by rw [e1]; rw [e2] at hw; exact hm.inst w hw,
+      fun p hp => by rw [e1]; rw [e3] at hp; exact hm.ports_bound p hp, by rw [e3]; exact hm.ports_nodup⟩
+  | some e =>
+    obtain ⟨S0, e1, -, -, -, -, -, -, -, hstep, hp0, hdiff⟩ := step_browser h cfg S i e hi
+    rw [hstep]
+    have hports : (browserStep h cfg S0 e).1.ports =
+        keepBound (Napplet.step h.crypto cfg.shell S0.shell e).1
+          (boundPorts (Napplet.step h.crypto cfg.shell S0.shell e).2 ++ S0.ports) := by
+      rcases hso : Napplet.step h.crypto cfg.shell S0.shell e with ⟨sh, outs⟩
+      simp only [browserStep, hso, flushStep]
+      exact (dropPorts_shell _ _).2
+    obtain ⟨b1, b2, -, -, -, -, -, -⟩ := browserStep_spec h cfg S0 e
+    rw [e1] at b1 b2 hports
+    refine ⟨?_, ?_, ?_⟩
+    · intro w hw
+      rw [b2] at hw
+      have hnr : w ∉ removedFrames (Napplet.step h.crypto cfg.shell S.shell e).2 :=
+        fun hm => hw (clearInst_mem _ _ _ hm)
+      rw [clearInst_other _ _ _ hnr] at hw
+      rw [b1]
+      by_cases hd : S0.inst w = S.inst w
+      · rw [hd] at hw
+        rcases live_stays (c := h.crypto) (scfg := cfg.shell) e w (hm.inst w hw) with h1 | h1
+        · exact h1
+        · exact absurd (mem_removedFrames_of (.inl h1)) hnr
+      · obtain ⟨hn, m, b, rfl⟩ := hdiff w hd
+        rcases create_none (c := h.crypto) (scfg := cfg.shell) (m := m) (bytes := b) hn with h1 | ⟨er, h1⟩
+        · exact h1
+        · exact absurd (mem_removedFrames_of (.inr ⟨er, h1⟩)) hnr
+    · intro p hp
+      rw [hports] at hp
+      rw [b1]
+      exact (List.mem_filter.mp hp).2
+    · rw [hports]
+      refine List.Nodup.sublist (List.filter_sublist) ?_
+      rw [hp0]
+      obtain ⟨hl, hun⟩ := boundPorts_step (c := h.crypto) (scfg := cfg.shell) (sh := S.shell) e
+      refine List.nodup_append.mpr ⟨?_, hm.ports_nodup, ?_⟩
+      · match hb : boundPorts (Napplet.step h.crypto cfg.shell S.shell e).2, hl with
+        | [], _ => exact List.nodup_nil
+        | [_], _ => exact List.nodup_cons.mpr ⟨by simp, List.nodup_nil⟩
+      · intro a ha b hb' hab
+        subst hab
+        have := hm.ports_bound a hb'
+        rw [hun a ha] at this
+        cases this
+
+theorem Reachable.memInv {h : Host} {cfg : Config} {S : RtState} (hr : Runtime.Reachable h cfg S) :
+    MemInv S := by
+  induction hr with
+  | init => exact MemInv.init cfg
+  | step i _ ih => exact ih.step i
+
+/-! ### Memory follows live state -/
+
+section memory
+variable {h : Host} {cfg : Config} {names : FMap WindowId (Option String)} {s : RtState'}
+
+/-- Every key of the live-frame map is a live window. -/
+theorem live_keys (hw : WF s) {w : WindowId} (hk : w ∈ s.shell.live.keys) :
+    IsLive ((abs s).shell.frames w) := by
+  simp only [abs, ShellState'.abs, hw.live_not_removed w hk]
+  obtain ⟨⟨k, v⟩, he, rfl⟩ := List.mem_map.mp hk
+  rw [FMap.get_of_mem hw.live_wf.1 he]
+  have h1 := hw.live_live _ he
+  have h2 := hw.live_wf.2 _ he
+  simp only at h1 h2
+  rw [← h1] at h2 ⊢
+  match v, h2 with
+  | some (.live id ex p ld), _ => exact ⟨id, ex, p, ld, rfl⟩
+
+/-- Every key of the bindings map is a bound port. -/
+theorem bindings_keys (hw : WF s) {q : PortId} (hk : q ∈ s.shell.bindings.keys) :
+    ((abs s).shell.bindings q).isSome = true := by
+  obtain ⟨⟨k, v⟩, he, rfl⟩ := List.mem_map.mp hk
+  simp only [abs, ShellState'.abs]
+  rw [FMap.get_of_mem hw.bindings_wf.1 he]
+  exact hw.bindings_wf.2 _ he
+
+/-- Every key of the grants map is a bound port. -/
+theorem grants_keys (hn : names.get = cfg.endpointName) (hr : Reachable' h cfg names s)
+    {q : PortId} (hk : q ∈ s.shell.grants.keys) : ((abs s).shell.bindings q).isSome = true := by
+  obtain ⟨hw, hR⟩ := hr.abs hn
+  obtain ⟨⟨k, v⟩, he, rfl⟩ := List.mem_map.mp hk
+  cases hb : (abs s).shell.bindings k with
+  | some _ => rfl
+  | none =>
+    have := (Runtime.shell_inv hR).grants_bound k hb
+    simp only [abs, ShellState'.abs] at this
+    rw [FMap.get_of_mem hw.grants_wf.1 he] at this
+    have := hw.grants_wf.2 _ he
+    simp_all [keepNe]
+
+/-- Every key of the instance-id map is a live window. -/
+theorem inst_keys (hn : names.get = cfg.endpointName) (hr : Reachable' h cfg names s)
+    {w : WindowId} (hk : w ∈ s.inst.keys) : IsLive ((abs s).shell.frames w) := by
+  obtain ⟨hw, hR⟩ := hr.abs hn
+  obtain ⟨⟨k, v⟩, he, rfl⟩ := List.mem_map.mp hk
+  apply (Reachable.memInv hR).inst
+  simp only [abs]
+  rw [FMap.get_of_mem hw.inst_wf.1 he]
+  have := hw.inst_wf.2 _ he
+  simpa [keepNat] using this
+
+/-- `ports` lists bound ports, each once. -/
+theorem ports_bound (hn : names.get = cfg.endpointName) (hr : Reachable' h cfg names s) :
+    (∀ p ∈ s.ports, ((abs s).shell.bindings p).isSome = true) ∧ s.ports.Nodup := by
+  obtain ⟨-, hR⟩ := hr.abs hn
+  exact ⟨(Reachable.memInv hR).ports_bound, (Reachable.memInv hR).ports_nodup⟩
+
+/-- No component keeps per-endpoint state for a port that is not bound
+(`Runtime.teardown_clears` on the abstraction). -/
+theorem components_bound (hn : names.get = cfg.endpointName) (hr : Reachable' h cfg names s)
+    {p : PortId} (hb : (abs s).shell.bindings p = none) : mentions (abs s) p = false :=
+  Runtime.teardown_clears (hr.abs hn).2 hb
+
+/-- Removed windows cost at most one interval more than there are live windows, when the
+host numbers windows `0, 1, …, n - 1` (every window below `n` was created, none above). -/
+theorem removed_length_le (hw : WF s) {n : Nat}
+    (hb : ∀ w, (abs s).shell.frames w ≠ none → w < n)
+    (hcov : ∀ w, w < n → (abs s).shell.frames w ≠ none) :
+    s.shell.removed.length ≤ s.shell.live.keys.length + 1 := by
+  apply Ivs.length_le hw.removed (n := n)
+  · intro x hx
+    apply hb x
+    simp [abs, ShellState'.abs, hx]
+  · intro x hx
+    have := hcov x hx
+    cases hm : Ivs.mem s.shell.removed x
+    · right
+      simp only [abs, ShellState'.abs, hm] at this
+      by_cases hk : x ∈ s.shell.live.keys
+      · exact hk
+      · rw [FMap.get_of_not_mem hk, hw.live_dflt] at this
+        exact absurd rfl this
+    · exact .inl rfl
+
+end memory
 
 end Napplet.Refine
