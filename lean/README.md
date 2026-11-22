@@ -89,13 +89,12 @@ either. The model's behaviour for each is fixed:
 - Upload cancel: no wire message exists, so there is nothing to handle.
 - Paged `relay.query`: not part of the wire.
 
-### How the host contracts are met
+### Which standard each host operation uses
 
-This is not a list of further inputs: every host function, call, effect and event
-is a contract written in `Napplet/Host.lean`, inside the model. The table only shows
-which of the two items above meets each one.
+Every host function, call, effect and event is defined in `Napplet/Host.lean`, inside
+the model. This table only shows, for each, which item of the two above it uses.
 
-| Host contract (in the model) | Met with |
+| Host operation (defined in the model) | Uses |
 |---|---|
 | Signer (`Call.sign`) | NIP-01 event id and BIP-340 signature with the user's key (local, NIP-07 or NIP-46). |
 | Encryption (`Call.encrypt`, `Call.decrypt`, `Host.encryptedWith`, `Host.looksCiphertext`) | NIP-04, NIP-44; which incoming events are encrypted per NIP-17/NIP-59. |
@@ -503,25 +502,29 @@ the model.
     (upstream defines no correlated error for `get`), and the subscription receives the
     first valid snapshot after a committed edit.
 
+48. **Where upstream leaves behaviour undefined.** A shell-owned media session without
+    `source` is `"missing source"` (no out-of-band binding exists); gift-wrap depth is
+    decided by the host's `encryptedWith`/`decrypt` contract under NIP-17/NIP-59; no
+    sidecar resources are sent; nothing cancels an upload in progress (there is no
+    message for it), and `cancelled` arises only from a declined consent prompt;
+    `relay.query` returns one result.
+
 ## Not modelled yet
 
 - The deferred CLASS and CONNECT tracks.
-- Behaviour upstream leaves undefined (each with the upstream text that leaves it
-  open, and what the model does instead, so an implementer needs nothing more):
+- Behaviour upstream leaves undefined, each shown by the upstream text:
   - NAP-MEDIA §Shell Behavior: `source` is required "unless the shell defines a
-    separate out-of-band source binding", and no such binding is defined. The model
-    defines none: a shell-owned create without `source` is `"missing source"`.
-  - NAP-RELAY says to decrypt "incoming encrypted events (NIP-04/NIP-44)" and never
-    mentions NIP-59 gift wraps (kind 1059 appears only in the privacy text), so how
-    deep to unwrap is undefined. The host's `encryptedWith`/`decrypt` contract
-    decides, per NIP-17/NIP-59.
+    separate out-of-band source binding"; no such binding is defined anywhere.
+  - NAP-RELAY requires decrypting "incoming encrypted events (NIP-04/NIP-44)" and does
+    not mention NIP-59 gift wraps, so how deeply to unwrap is undefined.
   - NAP-RESOURCE §Sidecar Pre-Resolution: "Concrete carrier attachments are deferred
-    to the importing spec changes." The model never sends sidecar resources.
+    to the importing spec changes."
   - NAP-UPLOAD lists the state `cancelled` but defines no cancel operation or wire
-    message. The model has nothing to receive; `cancelled` arises only from a declined
-    consent prompt.
+    message.
   - Paged `relay.query` (`stream: true`) appears only in review discussion, not in the
-    NAP-RELAY text. The model's `relay.query` returns one result.
+    NAP-RELAY text.
+
+  How the runtime behaves at each of these points is decision 48.
 
 Optional behaviours the model leaves out on purpose (all MAY or unquantified SHOULD,
 each marked OPTIONAL in `conformance/`): the NIP-5D CI reachable-port scan and NIP-89
