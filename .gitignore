@@ -6,3 +6,6 @@ UPSTREAM-ISSUES.md
 
 # OS / editor
 .DS_Store
+
+# Separate checkout of nostrocket/hypergolic, audited read-only
+hypergolic/
