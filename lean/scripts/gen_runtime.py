@@ -227,6 +227,20 @@ def boundPorts : List Napplet.Output → List PortId
   | .bound _ p _ :: os => p :: boundPorts os
   | _ :: os => boundPorts os
 
+def removedFrames : List Napplet.Output → List WindowId
+  | [] => []
+  | .removeFrame w :: os => w :: removedFrames os
+  | _ :: os => removedFrames os
+
+/-- Forget the instance ids of removed frames (modelling decision 53). -/
+def clearInst (f : WindowId → Nat) : List WindowId → WindowId → Nat
+  | [] => f
+  | w :: ws => clearInst (upd f w 0) ws
+
+/-- Keep only ports that are still bound (modelling decision 53). -/
+def keepBound (sh : ShellState) (ps : List PortId) : List PortId :=
+  ps.filter fun p => (sh.bindings p).isSome
+
 /-- Deliver retained intent deliveries to targets that are now ready. -/
 def flushStep (h : Host) (s : RtState) : RtState × List Output :=""")
 if FLUSH:
@@ -237,7 +251,7 @@ w("""
 /-- A browser event: the NIP-5D shell, teardown of every closed port, then flush. -/
 def browserStep (h : Host) (cfg : Config) (s : RtState) (e : Event) : RtState × List Output :=
   let (sh, outs) := Napplet.step h.crypto cfg.shell s.shell e
-  let s1 := { s with shell := sh, ports := boundPorts outs ++ s.ports }
+  let s1 := { s with shell := sh, ports := keepBound sh (boundPorts outs ++ s.ports), inst := clearInst s.inst (removedFrames outs) }
   let (s2, drops) := dropPorts s1 (closedPorts outs)
   let (s3, fl) := flushStep h s2
   (s3, outs.flatMap ofShell ++ drops ++ fl)
@@ -486,7 +500,7 @@ theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
   generalize hst : Napplet.step h.crypto cfg.shell s.shell e = r
   obtain ⟨sh, outs⟩ := r
   apply Inv.flush
-  obtain ⟨hs1, hs2⟩ := dropPorts_shell { s with shell := sh, ports := boundPorts outs ++ s.ports } (closedPorts outs)
+  obtain ⟨hs1, hs2⟩ := dropPorts_shell { s with shell := sh, ports := keepBound sh (boundPorts outs ++ s.ports), inst := clearInst s.inst (removedFrames outs) } (closedPorts outs)
   have hsh : sh = (Napplet.step h.crypto cfg.shell s.shell e).1 := by rw [hst]
   have hout : outs = (Napplet.step h.crypto cfg.shell s.shell e).2 := by rw [hst]
   refine ⟨?_, ?_, ?_⟩
@@ -495,13 +509,14 @@ theorem Inv.browser {h : Host} {cfg : Config} {s : RtState} (hi : Inv h cfg s) (
     rw [hs1] at hb; rw [hs2]
     simp only at hb ⊢
     rw [hsh] at hb
+    have hb' := hb
     rcases Napplet.step_bind e hb with hb | ⟨w, id, hm⟩
-    · exact List.mem_append_right _ (hi.ports p b hb)
-    · exact List.mem_append_left _ (mem_boundPorts (hout ▸ hm))
+    · exact List.mem_filter.mpr ⟨List.mem_append_right _ (hi.ports p b hb), by rw [hsh]; simp [hb']⟩
+    · exact List.mem_filter.mpr ⟨List.mem_append_left _ (mem_boundPorts (hout ▸ hm)), by rw [hsh]; simp [hb']⟩
   · intro q hq
     rw [hs1] at hq
     simp only at hq
-    cases hm : mentions (dropPorts { s with shell := sh, ports := boundPorts outs ++ s.ports } (closedPorts outs)).1 q
+    cases hm : mentions (dropPorts { s with shell := sh, ports := keepBound sh (boundPorts outs ++ s.ports), inst := clearInst s.inst (removedFrames outs) } (closedPorts outs)).1 q
     · rfl
     · obtain ⟨h1, h2⟩ := dropPorts_mentions _ _ _ hm
       rw [hsh] at hq
