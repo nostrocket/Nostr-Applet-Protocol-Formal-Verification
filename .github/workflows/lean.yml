@@ -29,6 +29,9 @@ jobs:
           git diff --exit-code -- traces
           ./scripts/check_traces.sh
 
+      - name: Binding API table matches the documented tables
+        run: python3 scripts/binding_api_table.py --check
+
       - name: No sorry
         run: |
           if grep -rnw sorry Napplet Napplet.lean OracleMain.lean TraceGen.lean; then

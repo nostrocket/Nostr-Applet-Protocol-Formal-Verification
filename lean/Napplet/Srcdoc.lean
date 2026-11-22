@@ -627,6 +627,12 @@ theorem csp_first (z : Code) (csp boot : String) :
     rw [lexN_step (lex_head _), lexN_step (lex_meta csp _), lexN_step (lex_script _)]
     simp [lexN]
 
+/-- Safe as the text of a `<script>` element: no `</script` (in any case) and no `<!--`,
+so the element ends at the injected `</script>` (HTML script data states). -/
+def scriptSafe (js : String) : Bool :=
+  let low := String.ofList (js.toList.map Char.toLower)
+  (low.splitOn "</script").length == 1 && (js.splitOn "<!--").length == 1
+
 /-! ## The byte-level statements -/
 
 theorem codes_bytes (b : Bytes) : (b.map UInt8.toNat).map Nat.toUInt8 = b := by

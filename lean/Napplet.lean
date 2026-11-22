@@ -40,6 +40,7 @@ import Napplet.Codec
 import Napplet.Persist
 import Napplet.Sha256
 import Napplet.Srcdoc
+import Napplet.Bootstrap
 import Napplet.Oracle
 import Napplet.Test.Traces
 import Napplet.Binding

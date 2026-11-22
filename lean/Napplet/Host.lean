@@ -66,9 +66,12 @@ and the browser.
   the manifest's `server` hints) or a gateway; the runtime verifies both
   (`checkManifest`), so the host needs no trust in either source. On
   `Output.iframeCreated w id exposed` it creates the iframe: `sandbox="allow-scripts"`,
-  `srcdoc` = the verified bytes with the CSP `meta` (NIP-5D §Security baseline) as the
-  first element of `head` and the bootstrap (`Binding`, `BindingApi`) injected before
-  any napplet script, exposing exactly `exposed` as `window.napplet.<domain>`. `inst`
+  `srcdoc` = `Bootstrap.srcdoc bytes exposed` decoded as UTF-8, that is
+  `Srcdoc.buildSrcdoc` of the verified bytes with the NAPPLETS-SPEC §16.1 baseline CSP
+  (`Srcdoc.baselineCsp`) `meta` as the first element of `head` and the bootstrap
+  (`Bootstrap.bootstrapJs exposed`, implementing `Binding` and `BindingApi`) right after
+  it, before any napplet script (`Srcdoc.csp_first`), exposing exactly `exposed` as
+  `window.napplet.<domain>`. `inst`
   is the host's identifier for this napplet instance (NAP-STORAGE §Instance Scope): it
   MUST differ between instances that exist at the same time (Unique) and MUST be the
   same for the same instance across reloads and sessions (Stable). A shell that must

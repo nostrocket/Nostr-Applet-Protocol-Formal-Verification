@@ -249,4 +249,155 @@ def settles (t : String) : Bool := !(t ∈ Binding.noResult)
 
 #guard settles "storage.get" && !settles "relay.subscribe"
 
+/-! ### The tables as data
+
+`methods` is the tables above, one entry per row, in order. `scripts/binding_api_table.py
+--check` re-derives it from the tables and CI fails on any difference. The bootstrap
+script (`Bootstrap.lean`) is built from it. -/
+
+/-- How a method reaches the wire. -/
+inductive Wire where
+  /-- No wire message (a local query, helper, or sugar over another method). -/
+  | local
+  /-- A request of this type; `inst` adds `scope: "instance"` (NAP-STORAGE). -/
+  | req (type : String) (inst : Bool)
+  /-- A fire-and-forget message of this type. -/
+  | fire (type : String)
+  /-- A handler registered for pushes of this type. -/
+  | push (type : String)
+  /-- Send `send`, resolve with the (sticky) push `recv` (NAP-SHELL `ready`). -/
+  | ready (send recv : String)
+  deriving DecidableEq, Repr
+
+structure Method where
+  domain : String
+  op : String
+  wire : Wire
+  deriving DecidableEq, Repr
+
+def methods : List Method := [
+  ⟨"shell", "supports", .local⟩,
+  ⟨"shell", "domains", .local⟩,
+  ⟨"shell", "check", .req "shell.check" false⟩,
+  ⟨"shell", "services", .local⟩,
+  ⟨"shell", "ready", .ready "shell.ready" "shell.init"⟩,
+  ⟨"shell", "onReady", .push "shell.init"⟩,
+  ⟨"intent", "invoke", .req "intent.invoke" false⟩,
+  ⟨"intent", "open", .local⟩,
+  ⟨"intent", "available", .req "intent.available" false⟩,
+  ⟨"intent", "handlers", .req "intent.handlers" false⟩,
+  ⟨"intent", "onChanged", .push "intent.changed"⟩,
+  ⟨"intent", "onDelivery", .push "intent.deliver"⟩,
+  ⟨"intent", "launch", .req "intent.launch" false⟩,
+  ⟨"inc", "emit", .fire "inc.emit"⟩,
+  ⟨"inc", "on", .req "inc.subscribe" false⟩,
+  ⟨"inc", "channel.open", .req "inc.channel.open" false⟩,
+  ⟨"inc", "channel.onOpened", .push "inc.channel.opened"⟩,
+  ⟨"inc", "channel.list", .req "inc.channel.list" false⟩,
+  ⟨"inc", "channel.broadcast", .fire "inc.channel.broadcast"⟩,
+  ⟨"inc", "ChannelHandle.emit", .fire "inc.channel.emit"⟩,
+  ⟨"inc", "ChannelHandle.on", .push "inc.channel.event"⟩,
+  ⟨"inc", "ChannelHandle.onClosed", .push "inc.channel.closed"⟩,
+  ⟨"inc", "ChannelHandle.close", .fire "inc.channel.close"⟩,
+  ⟨"theme", "get", .req "theme.get" false⟩,
+  ⟨"theme", "onChanged", .push "theme.changed"⟩,
+  ⟨"identity", "getPublicKey", .req "identity.getPublicKey" false⟩,
+  ⟨"identity", "onChanged", .push "identity.changed"⟩,
+  ⟨"identity", "getRelays", .req "identity.getRelays" false⟩,
+  ⟨"identity", "getProfile", .req "identity.getProfile" false⟩,
+  ⟨"identity", "getFollows", .req "identity.getFollows" false⟩,
+  ⟨"identity", "getList", .req "identity.getList" false⟩,
+  ⟨"identity", "getZaps", .req "identity.getZaps" false⟩,
+  ⟨"identity", "getMutes", .req "identity.getMutes" false⟩,
+  ⟨"identity", "getBlocked", .req "identity.getBlocked" false⟩,
+  ⟨"identity", "getBadges", .req "identity.getBadges" false⟩,
+  ⟨"relay", "subscribe", .req "relay.subscribe" false⟩,
+  ⟨"relay", "publish", .req "relay.publish" false⟩,
+  ⟨"relay", "publishEncrypted", .req "relay.publishEncrypted" false⟩,
+  ⟨"relay", "query", .req "relay.query" false⟩,
+  ⟨"relay", "Subscription.close", .fire "relay.close"⟩,
+  ⟨"storage", "getItem", .req "storage.get" false⟩,
+  ⟨"storage", "setItem", .req "storage.set" false⟩,
+  ⟨"storage", "removeItem", .req "storage.remove" false⟩,
+  ⟨"storage", "keys", .req "storage.keys" false⟩,
+  ⟨"storage", "instance.getItem", .req "storage.get" true⟩,
+  ⟨"storage", "instance.setItem", .req "storage.set" true⟩,
+  ⟨"storage", "instance.removeItem", .req "storage.remove" true⟩,
+  ⟨"storage", "instance.keys", .req "storage.keys" true⟩,
+  ⟨"keys", "registerAction", .req "keys.registerAction" false⟩,
+  ⟨"keys", "unregisterAction", .fire "keys.unregisterAction"⟩,
+  ⟨"keys", "forward", .fire "keys.forward"⟩,
+  ⟨"keys", "onAction", .local⟩,
+  ⟨"media", "createSession", .req "media.session.create" false⟩,
+  ⟨"media", "updateSession", .fire "media.session.update"⟩,
+  ⟨"media", "destroySession", .fire "media.session.destroy"⟩,
+  ⟨"media", "reportState", .fire "media.state"⟩,
+  ⟨"media", "reportCapabilities", .fire "media.capabilities"⟩,
+  ⟨"media", "command", .fire "media.command"⟩,
+  ⟨"media", "onState", .push "media.state"⟩,
+  ⟨"media", "onCapabilities", .push "media.capabilities"⟩,
+  ⟨"media", "onCommand", .push "media.command"⟩,
+  ⟨"media", "onControls", .push "media.controls"⟩,
+  ⟨"media", "onEnded", .push "media.session.ended"⟩,
+  ⟨"notify", "send", .req "notify.send" false⟩,
+  ⟨"notify", "dismiss", .fire "notify.dismiss"⟩,
+  ⟨"notify", "badge", .fire "notify.badge"⟩,
+  ⟨"notify", "registerChannel", .fire "notify.registerChannel"⟩,
+  ⟨"notify", "requestPermission", .req "notify.requestPermission" false⟩,
+  ⟨"notify", "onAction", .push "notify.action"⟩,
+  ⟨"notify", "onClicked", .push "notify.clicked"⟩,
+  ⟨"notify", "onDismissed", .push "notify.dismissed"⟩,
+  ⟨"notify", "onControls", .push "notify.controls"⟩,
+  ⟨"resource", "info", .req "resource.info" false⟩,
+  ⟨"resource", "bytes", .req "resource.bytes" false⟩,
+  ⟨"resource", "bytesMany", .req "resource.bytesMany" false⟩,
+  ⟨"config", "registerSchema", .req "config.registerSchema" false⟩,
+  ⟨"config", "get", .req "config.get" false⟩,
+  ⟨"config", "subscribe", .req "config.subscribe" false⟩,
+  ⟨"config", "onSchemaError", .push "config.schemaError"⟩,
+  ⟨"config", "openSettings", .fire "config.openSettings"⟩,
+  ⟨"config", "schema", .local⟩,
+  ⟨"upload", "info", .req "upload.info" false⟩,
+  ⟨"upload", "upload", .req "upload.upload" false⟩,
+  ⟨"upload", "status", .req "upload.status" false⟩,
+  ⟨"upload", "onStatus", .push "upload.status.changed"⟩,
+  ⟨"value", "send", .req "value.send" false⟩,
+  ⟨"value", "quote", .req "value.quote" false⟩,
+  ⟨"value", "status", .req "value.status" false⟩,
+  ⟨"value", "onStatus", .push "value.status.changed"⟩,
+  ⟨"outbox", "getEvent", .req "outbox.getEvent" false⟩,
+  ⟨"outbox", "query", .req "outbox.query" false⟩,
+  ⟨"outbox", "subscribe", .req "outbox.subscribe" false⟩,
+  ⟨"outbox", "publish", .req "outbox.publish" false⟩,
+  ⟨"outbox", "resolveRelays", .req "outbox.resolveRelays" false⟩,
+  ⟨"cvm", "discover", .req "cvm.discover" false⟩,
+  ⟨"cvm", "request", .req "cvm.request" false⟩,
+  ⟨"cvm", "listTools", .local⟩,
+  ⟨"cvm", "callTool", .local⟩,
+  ⟨"cvm", "listResources", .local⟩,
+  ⟨"cvm", "readResource", .local⟩,
+  ⟨"cvm", "close", .req "cvm.close" false⟩,
+  ⟨"cvm", "onEvent", .push "cvm.event"⟩,
+  ⟨"cvm", "registry.list", .req "cvm.registry.list" false⟩,
+  ⟨"cvm", "registry.has", .req "cvm.registry.has" false⟩,
+  ⟨"cvm", "registry.describe", .req "cvm.registry.describe" false⟩,
+  ⟨"cvm", "registry.call", .req "cvm.registry.call" false⟩,
+  ⟨"link", "open", .req "link.open" false⟩,
+  ⟨"pow", "mine", .req "pow.mine" false⟩,
+  ⟨"pow", "mineAndPublish", .req "pow.mineAndPublish" false⟩,
+  ⟨"pow", "queue", .req "pow.queue" false⟩,
+  ⟨"pow", "job", .req "pow.job" false⟩,
+  ⟨"pow", "hashrate", .req "pow.hashrate" false⟩,
+  ⟨"pow", "cancel", .req "pow.cancel" false⟩,
+  ⟨"pow", "pause", .req "pow.pause" false⟩,
+  ⟨"pow", "resume", .req "pow.resume" false⟩,
+  ⟨"pow", "formatHashRate", .local⟩,
+  ⟨"display", "list", .req "display.list" false⟩,
+  ⟨"display", "push", .req "display.push" false⟩
+]
+
+-- every table is a registered NAP domain
+#guard methods.all fun m => (Domain.ofName? m.domain).isSome
+#guard methods.length == 118
+
 end Napplet.BindingApi
