@@ -138,3 +138,43 @@ open Napplet
 #print axioms NapMedia.retire_once
 #print axioms NapCvm.paid_requires_authority
 #print axioms NapCvm.duplicate_response_dropped
+-- finite representation (Refine): step' refines Runtime.step, memory follows live state
+#print axioms Refine.abs_step'
+#print axioms Refine.step'_outputs
+#print axioms Refine.WF.step'
+#print axioms Refine.Reachable'.abs
+#print axioms Refine.live_keys
+#print axioms Refine.bindings_keys
+#print axioms Refine.grants_keys
+#print axioms Refine.inst_keys
+#print axioms Refine.ports_bound
+#print axioms Refine.components_bound
+#print axioms Refine.removed_length_le
+#print axioms Ivs.length_le
+#print axioms Runtime.step_frame
+-- persistence and restore
+#print axioms Persist.persist_restore
+#print axioms Persist.decPersisted_enc
+#print axioms Persist.restore_clean
+#print axioms Persist.Inv.restore
+#print axioms Persist.Restored.inv
+#print axioms Persist.Restored.teardown_clears
+#print axioms Persist.Restored.port_closed_teardown
+#print axioms Persist.Restored.second_hello_teardown
+#print axioms Persist.Restored.ctx_verified
+#print axioms Persist.Restored.quota
+#print axioms Persist.Reachable.quota
+#print axioms Persist.Reachable''.abs
+#print axioms Persist.Persisted.check_wf
+-- JSON codecs of the runtime interface
+#print axioms Codec.decInput_enc
+#print axioms Codec.decOutput_enc
+#print axioms Codec.decCall_enc
+#print axioms Codec.decReply_enc
+#print axioms Codec.decEffect_enc
+#print axioms Codec.decHostEvent_enc
+#print axioms Codec.decManifestEvent_enc
+-- srcdoc
+#print axioms Srcdoc.csp_first
+#print axioms Srcdoc.buildSrcdoc_bytes
+#print axioms Srcdoc.step_app
