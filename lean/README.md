@@ -442,6 +442,67 @@ POW: FIFO scheduling (priority reported, not used); rejections carry
 publish asks for consent by default; NIP-01 ids and leading-zero bits are computed in
 the model.
 
+### Decisions added by the conformance audit (`conformance/`)
+
+35. **Lineage tags on root and named manifests.** `a`/`A` are "0-1 each, `5129` only";
+    the model applies that cardinality rule as it does for `d` and rejects a 15129 or
+    35129 manifest carrying them (`lineageOnNonSnapshot`). On snapshots they never affect
+    verification.
+36. **`nostr` sources.** A `nostr` source whose location decodes as an `naddr` must be a
+    kind 30617 repository announcement, or the `source` field is dropped; other NIP-34
+    clone-URL forms are kept for the host to resolve.
+37. **Binding retention.** `shell.init`, `inc.channel.closed` and `media.session.ended` are
+    sticky: every handler registered later for their key receives each once, until
+    teardown. Other retained pushes go to the first handler. After
+    `media.session.ended`, later `media.state`, `media.capabilities`, `media.command` and
+    `media.controls` for that session are discarded.
+38. **`inc.emit` topics.** Only a `napplet:` topic containing `?` or `#` is normalised;
+    every other topic is opaque and sent unchanged.
+39. **INTENT.** An invalid `handlerHint` address makes the request invalid
+    (`"invalid convention"`); every valid `i` tag yields its own contract; catalog entries
+    the shell would not admit as targets are marked non-dispatchable by the host and are
+    never candidates. Convention segments use the characters `[A-Za-z0-9._-]`
+    (`NapIntent.validIdent`); upstream names no character set.
+40. **Relay URL policy.** Every napplet-influenced relay URL (RELAY scoped `relay`,
+    OUTBOX hints, NIP-65 entries, fallbacks) must pass `Net.relayAllowed`: `wss://`, no
+    userinfo, no `localhost`, `*.localhost`, `*.local`, `*.home.arpa` or dotless names,
+    no private, multicast or reserved IP literal, and nothing a URL parser would read as
+    an IP. `Net.relayAllowed_not_private` proves an allowed IP-literal host is not
+    private; the host checks names after DNS (Host.lean §Napplet-named relays).
+41. **Foreign pubkeys.** A publish template whose raw `event` carries a `pubkey` other
+    than the shell user's is refused (RELAY `"policy denied"`, OUTBOX `"publish denied"`),
+    never re-stamped (NAP-POW: sign verbatim or reject). `mineAndPublish` applies the
+    write ACL and requires a signer at submit.
+42. **OUTBOX subscriptions.** Upstream removed `outbox.eose` and also says every request
+    gets a result or lifecycle message. A successful `outbox.subscribe` is answered only
+    by `outbox.event` and `outbox.closed`; one that matches nothing sends nothing until
+    closed.
+43. **RESOURCE MIME allowlists.** The sniffed MIME essence must be on the scheme's list
+    (`Run.Resource.Cfg.mimeAllowed`; default: `nostr:` JSON and text only; other schemes
+    common image, audio and video types, `application/octet-stream`, `text/plain`, JSON,
+    PDF), else `blocked-by-policy`. SVG rasterisation overflow or timeout makes
+    `Host.rasterize` return `none`, reported as `decode-failed`. The outstanding-bytes
+    quota is counted per terminal envelope. Hashtree hex is lowercase only.
+44. **UPLOAD per-napplet policy.** `Cfg.policyFor` gives a napplet its own rails (which
+    can only disable shell rails), `maxBytes` and MIME list; `upload.info` reports the
+    effective policy, and the re-check before `put` uses the policy in force then.
+45. **CVM.** A client request id is remembered for the rest of its (endpoint, server)
+    session, so reuse after completion is `"invalid message"`; registry requests are
+    validated before the registry-availability check; `cvm.close(server)` also ends
+    `registry.call` work pinned to that server.
+46. **KEYS browser-reserved shortcuts** are shell policy (`Run.Keys.Cfg.browserReserved`,
+    default the union of Windows/Linux and macOS browser shortcuts) on top of Tab,
+    Shift+Tab, Escape and Ctrl+W/T/L; none is ever bound, pushed or fired.
+47. **CONFIG.** `x-napplet-secret` with `default` is `secret-with-default` for every type;
+    Core-Subset constraints on a type they do not apply to must be well-typed and are
+    ignored; `enum` on an array compares whole arrays; a schema-valued
+    `additionalProperties` must be in the Core Subset and is accepted, but undeclared
+    members are never delivered or persisted. When a root `required` property has no
+    valid persisted value and no default, no snapshot validates: `config.get` and the
+    initial `config.subscribe` push get `config.schemaError {code: "invalid-schema"}`
+    (upstream defines no correlated error for `get`), and the subscription receives the
+    first valid snapshot after a committed edit.
+
 ## Not modelled yet
 
 - The deferred CLASS and CONNECT tracks.
@@ -462,7 +523,15 @@ the model.
   - Paged `relay.query` (`stream: true`) appears only in review discussion, not in the
     NAP-RELAY text. The model's `relay.query` returns one result.
 
-Optional behaviours the model leaves out on purpose (all MAY or unquantified SHOULD):
+Optional behaviours the model leaves out on purpose (all MAY or unquantified SHOULD,
+each marked OPTIONAL in `conformance/`): the NIP-5D CI reachable-port scan and NIP-89
+handler publication (outside the runtime); THEME font and background URL validation;
+RELAY subscription-filter limits; OUTBOX NIP-66 relay selection, broad-query and
+fallback limits and subscription counts; INC open rate limits and buffer bounds; INTENT
+invocation rate limits; UPLOAD showing the metadata-stripping policy to the user; VALUE
+allowance recurrence windows and target binding; CVM per-napplet concurrency limits;
+NOTIFY consent for `urgent`; DISPLAY update-rate bounds; KEYS caps on actions per
+napplet; and these:
 INC `shell:*` topic interception and emit ACLs, INTENT discovery of uninstalled
 recommendations, RESOURCE single-flight caching and per-minute rate limits, MEDIA
 promoted (detached) playback, CONFIG's `config.settingsOpened` acknowledgement and
