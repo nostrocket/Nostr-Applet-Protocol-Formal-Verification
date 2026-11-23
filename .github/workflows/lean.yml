@@ -29,6 +29,13 @@ jobs:
           git diff --exit-code -- traces
           ./scripts/check_traces.sh
 
+      - name: Verify the signed Relay fixture against the BIP-340 reference
+        run: |
+          verifier="$RUNNER_TEMP/bip340-reference.py"
+          curl -fsSL --retry 3 -o "$verifier" https://raw.githubusercontent.com/bitcoin/bips/fdcd8024595bc1e97db73883e716dbb91627c371/bip-0340/reference.py
+          echo "4b1d4ad9e60820df4a6d239733d52b014bc03e4c47afd757a2fe4d3b586d892c  $verifier" | sha256sum --check
+          python3 scripts/check_signed_relay.py "$verifier" traces/relay-query-signed.in.ndjson
+
       - name: Binding API table matches the documented tables
         run: python3 scripts/binding_api_table.py --check
 

@@ -235,6 +235,26 @@ def all : List Trace := [
 
 /-! ### Traces beyond the E2E vectors -/
 
+/-- A fixed, signed kind-0 event for replay by shells that verify NIP-01 events. -/
+private def signedProfile : NostrEvent :=
+  { id := "aa0187dd96eece9ef19860281bdf5d691f3e4096ef3f6f1fe8d70698ebd9bf12"
+    pubkey := "828428233553250f4e1bc3821a4b17e1ceb52ad9787da15d3d3092ab8bd62a16"
+    createdAt := 1700000000
+    kind := 0
+    tags := []
+    content := "{\"name\":\"Relay fixture\"}"
+    sig := "8baa617a4d8d0c869675b83708f2b82a19d06dcdb1a9c1869319aaceec954d6185b6c3d85c22decc994a86f8252f883044fdcfcd6505c09235cdc3dd0be56bcf" }
+
+/-- A successful one-shot query. The host delivers the signed profile, then EOSE. -/
+def signedRelayQuery : Trace :=
+  let filter := Json.obj [("authors", .arr [.str signedProfile.pubkey]),
+                          ("kinds", .arr [.nat signedProfile.kind]), ("limit", .nat 1)]
+  let query := Json.obj [("type", .str "relay.query"), ("id", .str "c3"), ("filters", .arr [filter])]
+  mk "relay-query-signed" (s1 ++ [
+    .event (.userChanged signedProfile.pubkey), .message 7 query,
+    .reply ⟨.relay, 0⟩ (.event signedProfile "wss://relay.example.com"),
+    .reply ⟨.relay, 0⟩ .eose])
+
 /-- Real SHA-256 (the oracle's default host): a manifest whose `x` is the artifact's
 SHA-256 loads; one whose `x` is not is rejected with `hashMismatch`. -/
 def shaTrace : Trace :=
@@ -259,7 +279,7 @@ def restoreTrace : Trace :=
      msg 7 "{ \"type\": \"storage.set\", \"id\": \"b1\", \"key\": \"lang\", \"value\": \"en\" }",
      msg 7 "{ \"type\": \"storage.keys\", \"id\": \"k1\" }"]⟩
 
-def extra : List Trace := [shaTrace, restoreTrace]
+def extra : List Trace := [shaTrace, restoreTrace, signedRelayQuery]
 
 /-- The input lines of a trace (header, then one encoded input per line). -/
 def inLines (t : Trace) : List String :=

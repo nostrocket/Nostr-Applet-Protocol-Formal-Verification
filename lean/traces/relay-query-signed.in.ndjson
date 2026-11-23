@@ -1,0 +1,8 @@
+{"config":{"display":{"devices":[{"id":"desk","width":800,"height":480,"type":"eink"}],"permitted":{"default":true}},"upload":{"rails":[{"rail":"nip96","server":"https://files.example.com/api/v2/media","returns":["https"]},{"rail":"blossom","server":"https://blossom.example.com","returns":["https","blossom"]}],"defaultRail":"nip96","maxBytes":104857600,"mimeTypes":["image/png","image/jpeg","application/pdf"]}},"host":{"hash":"test","sniff":"test"}}
+{"t":"create","w":1,"manifest":{"kind":35129,"pubkey":"0000000000000000000000000000000000000000000000000000000000000abc","content":"test napplet","tags":[["d","my-napplet"],["x","00000000000000000000000000000000000000000000000000000000000fbb62"]],"id":"0000000000000000000000000000000000000000000000000000000000000011"},"bytes":"bXktbmFwcGxldA==","inst":1}
+{"t":"load","w":1}
+{"t":"hello","w":1,"ports":[7]}
+{"t":"event","event":{"t":"userChanged","pubkey":"828428233553250f4e1bc3821a4b17e1ceb52ad9787da15d3d3092ab8bd62a16"}}
+{"t":"message","port":7,"msg":{"type":"relay.query","id":"c3","filters":[{"authors":["828428233553250f4e1bc3821a4b17e1ceb52ad9787da15d3d3092ab8bd62a16"],"kinds":[0],"limit":1}]}}
+{"t":"reply","tag":{"domain":"relay","n":0},"reply":{"t":"event","event":{"id":"aa0187dd96eece9ef19860281bdf5d691f3e4096ef3f6f1fe8d70698ebd9bf12","pubkey":"828428233553250f4e1bc3821a4b17e1ceb52ad9787da15d3d3092ab8bd62a16","created_at":1700000000,"kind":0,"tags":[],"content":"{\"name\":\"Relay fixture\"}","sig":"8baa617a4d8d0c869675b83708f2b82a19d06dcdb1a9c1869319aaceec954d6185b6c3d85c22decc994a86f8252f883044fdcfcd6505c09235cdc3dd0be56bcf"},"relay":"wss://relay.example.com"}}
+{"t":"reply","tag":{"domain":"relay","n":0},"reply":{"t":"eose"}}
