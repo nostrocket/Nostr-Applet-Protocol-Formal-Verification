@@ -5,7 +5,7 @@ nineteen live NAPs, the JSON wire codec, the composed runtime that ties them
 together, the host interface, and the napplet-side bootstrap and binding.
 1118 theorems and 849 evaluated vectors (124 of them end to end through the
 composed runtime, all of which also run byte for byte through the `napplet-oracle`
-executable as 43 traces). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
+executable as part of the 44-trace suite). Section numbers refer to [`../NAPPLETS-SPEC.md`](../NAPPLETS-SPEC.md),
 but the model was built from the upstream texts at the commits listed below.
 
 - Lean `v4.36.0`, no Mathlib, no dependencies.
@@ -111,6 +111,31 @@ from the trace (`host.verifySig`, `host.verifyEvent`: valid unless listed as inv
 Every policy function of `Config` has a finite JSON form, documented in
 `Napplet/Oracle.lean`. A port can run its own shell on the same trace and compare the
 lines; `traces/*.in.ndjson` and `traces/*.out.ndjson` are the E2E vectors in this form.
+
+#### Replaying the signed Relay query in another shell
+
+[`relay-query-signed.in.ndjson`](traces/relay-query-signed.in.ndjson) queries one author's
+kind-0 profile. The fixture relay supplies one signed NIP-01 event, then signals end of
+stored events (EOSE). Give your shell a bound napplet with relay read access and a
+fixture relay. Replay the request and both relay replies offline. The model's boot
+manifest and signature checks use test stand-ins. A shell can use its normal session
+setup and verify the supplied event as received. CI independently recomputes its
+NIP-01 ID and checks its Schnorr signature with the Bitcoin BIP-340 reference verifier.
+
+| What to compare | How to judge the result |
+|---|---|
+| Required for this successful query | Collect the matching event, wait for EOSE, close the subscription, then return `relay.query.result` with the request ID `c3`. The `events` array contains one record whose `event` equals the supplied profile, including its signature. Compare parsed fields so JSON object key order is irrelevant. |
+| Shell policy | The model includes the observed relay in `sidecar.relayHints`. The draft recommends disclosing observed relays after deduplication and permits policy to omit or limit the hints. The sidecar is optional. Any metadata belongs outside the signed event. |
+| Model bookkeeping | Window and port numbers, host call tags and the internal unsubscribe effect describe this model's execution. Another shell can use its own handles and observe that the query subscription closes. |
+
+These expectations follow the [pinned NAP-RELAY draft](https://github.com/napplet/naps/blob/9f30b3505335a52c574ff570576687d6467021ff/naps/NAP-RELAY.md).
+Run these commands from `lean/` to reproduce the model's exact output.
+
+```sh
+lake build
+.lake/build/bin/napplet-oracle < traces/relay-query-signed.in.ndjson > .lake/relay-query-signed.actual
+diff -u traces/relay-query-signed.out.ndjson .lake/relay-query-signed.actual
+```
 
 ### The `srcdoc` and the bootstrap (`Napplet/Srcdoc.lean`, `Napplet/Bootstrap.lean`)
 
